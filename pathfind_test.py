@@ -22,11 +22,9 @@ with open("config.json", "r") as f:
 server_port = config.get("server_port")
 print(f"Server port: {server_port}")
 
-reconnect = True
-
 class MCBot:
 
-    def __init__(self, bot_name, can_dig = False):
+    def __init__(self, bot_name, reconnect = True, can_dig = False):
         self.can_dig = can_dig
         self.bot_args = {
             "host": server_host,
@@ -36,9 +34,21 @@ class MCBot:
         }
         self.reconnect = reconnect
         self.bot_name = bot_name
-        self.start_bot()
 
-        # Enable digging in pathfinding.
+        try:
+            self.start_bot()
+        except Exception as e:
+            raise ConnectionError(f"Failed to start bot '{self.bot_name}'. Is the server running?") from e
+
+        # Validate the connection / version explicitly
+        if not hasattr(self.bot, 'version') or not self.bot.version:
+            raise ConnectionError(
+                f"Bot '{self.bot_name}' failed to retrieve the Minecraft version. "
+                f"This usually means the server at {self.bot_args['host']}:{self.bot_args['port']} "
+                f"refused the connection (ECONNREFUSED) or is offline."
+            )
+
+        # Control the bot's ability to dig
         self.mcData = require('minecraft-data')(self.bot.version)
         movements = mineflayer_pathfinder.Movements(self.bot, self.mcData)
         movements.canDig = self.can_dig
@@ -193,6 +203,27 @@ class MCBot:
     # Attach mineflayer events to bot
     def start_events(self):
 
+        # 2. Success Event: The ultimate proof it worked
+        @On(self.bot, 'spawn')
+        def on_spawn(this, *args):
+            print("SUCCESS: The bot has successfully logged in and spawned in the world!")
+            # Start your mining logic or other tasks here
+
+        # 3. Failure Event: Catches connection timeouts and bad credentials
+        @On(self.bot, 'error')
+        def on_error(this, err, *args):
+            print(f"CRITICAL ERROR: The bot encountered a problem: {err}")
+
+        # 4. Rejection Event: Catches server bans, whitelists, or full servers
+        @On(self.bot, 'kicked')
+        def on_kicked(this, reason, loggedIn, *args):
+            print(f"KICKED: The server rejected the bot. Reason: {reason}")
+
+        # 5. Disconnect Event: Catches server shutdowns or network drops
+        @On(self.bot, 'end')
+        def on_end(this, reason, *args):
+            print(f"DISCONNECTED: The bot lost connection to the server. Reason: {reason}")
+
         # Login event: Triggers on bot login
         @On(self.bot, "login")
         def login(*args):
@@ -214,7 +245,7 @@ class MCBot:
         @On(self.bot, "kicked")
         def kicked(this, reason, loggedIn):
             if loggedIn:
-                self.log(chalk.redBright(f"Kicked whilst trying to connect: {reason}"))
+                self.log(chalk.redBright(f"Kicked while trying to connect: {reason}"))
 
         # Chat event: Triggers on chat message
         @On(self.bot, "messagestr")
