@@ -77,32 +77,6 @@ class MCBot:
         self.bot.loadPlugin(mineflayer_pathfinder.pathfinder)
         self.start_events()
 
-    # Get coordinates of a player by uuid
-    def get_player_location(self, sender_uuid):
-        # Find all nearby players
-        local_players = self.bot.players
-        print(f"{local_players=}")
-
-        # Search for our specific player
-        for el in local_players:
-            player_data = local_players[el]
-            if player_data["uuid"] == sender_uuid:
-                vec3_temp = local_players[el].entity.position
-                player_location = vec3(
-                    vec3_temp["x"], vec3_temp["y"] + 1, vec3_temp["z"]
-                )
-
-        # Feedback
-        if player_location:
-            self.log(
-                chalk.magenta(
-                    f"Got player coordinates at {vec3_to_str(player_location)}"
-                )
-            )
-            return(player_location)
-        else:
-            self.log(f"Player not found.")
-
     def move_relative_to_self(self, x_offset, y_offset, z_offset):
         # Get the bot's current position
         current_pos = self.bot.entity.position
@@ -203,24 +177,18 @@ class MCBot:
     # Attach mineflayer events to bot
     def start_events(self):
 
-        # 2. Success Event: The ultimate proof it worked
-        @On(self.bot, 'spawn')
-        def on_spawn(this, *args):
-            print("SUCCESS: The bot has successfully logged in and spawned in the world!")
-            # Start your mining logic or other tasks here
-
         # 3. Failure Event: Catches connection timeouts and bad credentials
-        @On(self.bot, 'error')
+        @On(self.bot, "error")
         def on_error(this, err, *args):
             print(f"CRITICAL ERROR: The bot encountered a problem: {err}")
 
         # 4. Rejection Event: Catches server bans, whitelists, or full servers
-        @On(self.bot, 'kicked')
+        @On(self.bot, "kicked")
         def on_kicked(this, reason, loggedIn, *args):
             print(f"KICKED: The server rejected the bot. Reason: {reason}")
 
         # 5. Disconnect Event: Catches server shutdowns or network drops
-        @On(self.bot, 'end')
+        @On(self.bot, "end")
         def on_end(this, reason, *args):
             print(f"DISCONNECTED: The bot lost connection to the server. Reason: {reason}")
 
@@ -241,23 +209,26 @@ class MCBot:
         def spawn(*args):
             self.bot.chat("Hi buddy!")
 
-        # Kicked event: Triggers on kick from server
-        @On(self.bot, "kicked")
-        def kicked(this, reason, loggedIn):
-            if loggedIn:
-                self.log(chalk.redBright(f"Kicked while trying to connect: {reason}"))
+        @On(self.bot, "chat")
+        def handle_chat(this, username, message, *args):
+            # 1. Ignore the bot's own messages so it doesn't talk to itself
+            if username == self.bot.username:
+                return
+            sender = self.bot.players[username]
+                
+            # 2. Check if the player actually exists and is rendered
+            if not sender or not sender.entity:
+                self.bot.chat(f"I can't see you, {username}! You might be too far away.")
+                return
+                    
+            # 3. Grab the exact position
+            player_loc = sender.entity.position
 
-        # Chat event: Triggers on chat message
-        @On(self.bot, "messagestr")
-        def messagestr(this, messageType, jsonMsg, playerId, verified):
-            sender = playerId
-            message = jsonMsg["with"][1]["text"]
             if "quit" in message:
                 self.bot.chat("Goodbye!")
                 self.reconnect = False
                 this.quit()
             elif "build shelter" in message:
-                player_loc = self.get_player_location(sender)
                 self.build_shelter(player_loc)
             elif "dig to me" in message:
                 # Set to digging
@@ -266,7 +237,6 @@ class MCBot:
                 movements.canDig = True
                 self.bot.pathfinder.setMovements(movements)
 
-                player_loc = self.get_player_location(sender)
                 if player_loc:
                     self.pathfind_to_goal(player_loc)
 
@@ -276,9 +246,12 @@ class MCBot:
                 movements.canDig = self.can_dig
                 self.bot.pathfinder.setMovements(movements)
             elif "come to me" in message:
-                player_loc = self.get_player_location(sender)
                 if player_loc:
                     self.pathfind_to_goal(player_loc)
+            elif "teleport to me" in message:
+                #self.bot.chat(f"/tp {self.bot.username} {sender}")
+                safe_username = str(username).strip()
+                self.bot.chat(f"/tp {safe_username}")
             elif "mine line" in message:
                 self.mine_line(10)
 
