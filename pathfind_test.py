@@ -2,6 +2,7 @@ from javascript import require, On, Once, AsyncTask, once, off
 from simple_chalk import chalk
 import math
 import json
+import time
 
 def vec3_to_str(v):
     return f"x: {v['x']:.3f}, y: {v['y']:.3f}, z: {v['z']:.3f}"
@@ -48,6 +49,8 @@ class MCBot:
                 f"refused the connection (ECONNREFUSED) or is offline."
             )
 
+        self.bot.pathfinder.thinkTimeout = 10000 
+
         # Control the bot's ability to dig
         self.mcData = require('minecraft-data')(self.bot.version)
         movements = mineflayer_pathfinder.Movements(self.bot, self.mcData)
@@ -60,16 +63,35 @@ class MCBot:
 
     # Mineflayer: Pathfind to goal
     def pathfind_to_goal(self, goal_location):
+        if not self.bot or not getattr(self.bot, 'entity', None):
+            print("CRITICAL: Bot is disconnected or dead. Aborting pathfind.")
+            return False
+
+        # 2. PRE-FLIGHT CHECK: Did the pathfinder plugin crash/disappear?
+        if not getattr(self.bot, 'pathfinder', None):
+            print("CRITICAL: Pathfinder plugin is missing! Reloading plugin...")
+            return False
+
+        # 3. Clear any lingering ghost states from the last failure
+        if self.bot.pathfinder.isMoving():
+            self.bot.pathfinder.setGoal(None)
+            #time.sleep(0.5) # Give the bridge a moment to breathe
+
         try:
             self.bot.pathfinder.goto(
                 mineflayer_pathfinder.pathfinder.goals.GoalNear(
                     goal_location["x"], goal_location["y"], goal_location["z"], 1
                 ),
-                timeout=10000,
+                timeout=300000,
             )
 
         except Exception as e:
             self.log(f"Error while trying to run pathfind_to_goal: {e}")
+            if self.bot.pathfinder.isMoving():
+                self.bot.pathfinder.setGoal(None)
+            
+        # 4. Let the bridge threads breathe and synchronize before the loop continues
+        time.sleep(1)
 
     # Start mineflayer bot
     def start_bot(self):
@@ -91,8 +113,14 @@ class MCBot:
         goal = mineflayer_pathfinder.goals.GoalBlock(target_x, target_y, target_z)
 
         # Assign the goal to make the bot walk
-        print(f"Moving from X:{math.floor(current_pos.x)} to X:{target_x}")
-        self.bot.pathfinder.goto(goal, timeout = 10000)
+        try:
+            print(f"Attempting to pathfind to {target_x}, {target_y}, {target_z}...")
+            self.bot.pathfinder.goto(goal, timeout = 300000)
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Pathfinding failed: {error_msg}")
+            if self.bot.pathfinder.isMoving():
+                self.bot.pathfinder.setGoal(None)
 
     def mine_line(self, length):
         next_pos = self.bot.entity.position.offset(0, -1, 0)
@@ -151,28 +179,6 @@ class MCBot:
     def build_shelter(self, goal_location):
         self.dig_staircase_down(8)
         self.dig_chamber(8, 8)
-
-        #print(f"{self.bot.entity["position"]=}")
-        #print(f"Building shelter at {vec3_to_str(self.bot.entity["position"])}")
-        #SHELTER_DIRT_AMOUNT = 8
-        #SHELTER_MINING_BUFFER = 25
-        ## If empty, get some blocks for building +50 blocks away from shelter
-        #total_dirt = 0
-        #for item in self.bot.inventory.items():
-        #    if item.name == "dirt":
-        #        total_dirt += item.count
-        #print(f"Total dirt in inventory: {total_dirt}")
-        #if total_dirt < SHELTER_DIRT_AMOUNT:
-        #    print(f"Not enough dirt in inventory, mining for more...")
-        #    self.bot.pathfinder.goto(
-        #        mineflayer_pathfinder.pathfinder.goals.GoalNear(
-        #            SHELTER_MINING_BUFFER + goal_location["x"], goal_location["y"], goal_location["z"], 1
-        #        ),
-        #        timeout=10000,
-        #    )
-        #    self.mine_nearest_shallow_dirt(SHELTER_DIRT_AMOUNT - total_dirt) # Mine a batch of nearby dirt blocks to fill inventory
-
-            
 
     # Attach mineflayer events to bot
     def start_events(self):
