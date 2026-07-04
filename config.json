@@ -1,4 +1,4 @@
 {
-    "server_host": "localhost",
+    "server_host": "172.24.0.1",
     "server_port": 55556
 }

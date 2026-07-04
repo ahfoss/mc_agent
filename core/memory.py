@@ -65,14 +65,15 @@ def deserialize(serialized_value):
     else:
         return serialized_value
 
+
 class Memory:
     """
-    Memory that persists on disk and restores automatically on startup.
+    Memory module that persists state to disk and restores automatically on startup.
+    Saves JSON files inside the data/memory/ directory.
     """
 
     def __init__(self, server_port):
-        PATH = f"_memory/memory_{server_port}.json"
-        self.path = PATH
+        self.path = f"data/memory/memory_{server_port}.json"
         self.load()
 
     def load(self):
@@ -108,9 +109,6 @@ class Memory:
             json.dump(normalized, handle, indent=2, sort_keys=True)
 
     def store(self, key, value):
-        """
-        Need to serialize the value before storing it.
-        """
         serialized_value = serialize(value)
         self.data[key] = serialized_value
         self.save()
