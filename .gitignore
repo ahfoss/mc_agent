@@ -1,0 +1,7 @@
+# Runtime memory files
+_memory/memory_*.json
+
+# Python bytecode caches
+__pycache__/
+**/__pycache__/
+*.py[cod]

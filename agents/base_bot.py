@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import util.movement as um
+import util.memory as memory
 
 # Import the javascript libraries
 mineflayer = require("mineflayer")
@@ -13,7 +14,8 @@ vec3 = require("vec3")
 
 class BaseBot:
 
-    def __init__(self, bot_name, server_host, server_port, reconnect = True, can_dig = False):
+    def __init__(self, bot_name, server_host, server_port,
+                 reconnect = True, can_dig = False):
         self.can_dig = can_dig
         self.bot_args = {
             "host": server_host,
@@ -37,6 +39,7 @@ class BaseBot:
                 f"This usually means the server at {self.bot_args['host']}:{self.bot_args['port']} "
                 f"refused the connection (ECONNREFUSED) or is offline."
             )
+            return
 
         self.bot.pathfinder.thinkTimeout = 10000 
 
@@ -45,6 +48,8 @@ class BaseBot:
         movements = mineflayer_pathfinder.Movements(self.bot, self.mcData)
         movements.canDig = self.can_dig
         self.bot.pathfinder.setMovements(movements)
+
+        self.memory = memory.Memory(server_port = server_port)
 
     # Tags bot username before console messages
     def log(self, message):
@@ -106,13 +111,18 @@ class BaseBot:
                     
             # 3. Grab the exact position
             player_loc = sender.entity.position
+            self.bot.chat(f"{player_loc=}")
 
-            if "quit" in message:
+            if "quit" == message:
                 self.bot.chat("Goodbye!")
                 self.reconnect = False
                 this.quit()
             elif "build shelter" in message:
-                um.build_shelter(self, player_loc)
+                um.build_shelter(self)
+            elif "furnish shelter" in message:
+                um.furnish_shelter1(self)  # Pass the agent instance
+            elif "place block" in message:
+                um.place_block_on_ground_one_forward(self, "bedrock")
             elif "dig to me" in message:
                 # Set to digging
                 self.mcData = require('minecraft-data')(self.bot.version)
