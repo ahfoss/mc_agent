@@ -1,6 +1,9 @@
 # Runtime memory files
 data/memory/memory_*.json
 
+# Log file
+bot.log
+
 # Python bytecode caches
 __pycache__/
 **/__pycache__/
