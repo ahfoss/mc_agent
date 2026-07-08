@@ -4,12 +4,12 @@ import capabilities.construction as ucon
 import behaviors.mining as bm
 
 
-def build_shelter(agent):
+def build_shelter(agent, depth=8):
     """
     Builds a simple underground shelter by digging down and creating a chamber.
     """
-    agent.memory.store("shelter_location", agent.bot.entity.position)
-    bm.dig_staircase_down(agent, 8)
+    agent.memory.store("shelter_location", agent.bot.position)
+    bm.dig_staircase_down(agent, depth)
     bm.dig_chamber(agent, 8, 8)
 
 
@@ -25,11 +25,8 @@ def furnish_shelter1(agent):
         agent.bot.chat("Coordinates not found in memory. Have you already built the shelter?")
         return
 
-    # Navigate to shelter
-    um.move_absolute(agent, shelter_location)
-    
-    # Move relative inside shelter
-    um.move_relative_to_self(agent, 9, -8, 5)
+    # Navigate to shelter plus offset inside
+    um.move_absolute(agent, shelter_location + (9, -8, 5))
     
     # Craft a crafting table
     uc.craft_direct(agent, "crafting_table")
@@ -38,7 +35,7 @@ def furnish_shelter1(agent):
     ucon.place_block_on_ground_relative_to_self(agent, "crafting_table", 0, -1, 1)
     
     # Store crafting table area location
-    agent.memory.store("crafting_area", agent.bot.entity.position)
+    agent.memory.store("crafting_area", agent.bot.position)
 
     # Craft door
     door_name = uc.craft_any_door(agent, quantity=1)

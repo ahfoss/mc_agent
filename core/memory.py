@@ -1,8 +1,9 @@
 import os
 import json
-from javascript import require
+def get_vec3():
+    from javascript import require
+    return require('vec3').Vec3
 
-Vec3 = require('vec3').Vec3
 
 
 def _is_number(value):
@@ -12,10 +13,17 @@ def _is_number(value):
     except (TypeError, ValueError):
         return False
 
-
 def _is_vec3(value):
     if value is None:
         return False
+
+    Vec3 = get_vec3()
+    try:
+        if isinstance(value, Vec3):
+            return True
+    except TypeError:
+        if type(value).__name__ == 'Vec3' or (hasattr(value, "constructor") and value.constructor == Vec3):
+            return True
 
     if isinstance(value, dict):
         return all(key in value for key in ("x", "y", "z")) and all(_is_number(value[key]) for key in ("x", "y", "z"))
@@ -57,8 +65,10 @@ def deserialize(serialized_value):
         return serialized_value["value"]
     elif isinstance(serialized_value, dict) and serialized_value.get("type") == "Vec3":
         coords = serialized_value["value"]
+        Vec3 = get_vec3()
         return Vec3(coords["x"], coords["y"], coords["z"])
     elif isinstance(serialized_value, dict) and all(key in serialized_value for key in ("x", "y", "z")) and all(_is_number(serialized_value[key]) for key in ("x", "y", "z")):
+        Vec3 = get_vec3()
         return Vec3(serialized_value["x"], serialized_value["y"], serialized_value["z"])
     elif isinstance(serialized_value, dict) and serialized_value.get("type") == "unknown":
         return serialized_value["value"]

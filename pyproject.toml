@@ -13,5 +13,17 @@ dependencies = [
     "simple-chalk"
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.6.0",
+    "pytest-cov>=4.0.0"
+]
+
 [tool.setuptools]
 packages = ["core", "bots", "capabilities", "behaviors", "commands"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+

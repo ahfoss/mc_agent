@@ -11,7 +11,7 @@ class FarmerBot(BaseBot):
     A specialized bot subclass for farming activities.
     Inherits from the BaseBot and registers farming-specific chat triggers.
     """
-    def __init__(self, bot_name, server_host, server_port, reconnect=True, can_dig=True):
+    def __init__(self, bot_name, server_host, server_port, reconnect=True, can_dig=True, version=None):
         # Initialize a custom command registry for the Farmer Bot
         registry = CommandRegistry()
         
@@ -34,7 +34,8 @@ class FarmerBot(BaseBot):
             server_port=server_port,
             registry=registry,
             reconnect=reconnect,
-            can_dig=can_dig
+            can_dig=can_dig,
+            version=version
         )
         
     def start_events(self):

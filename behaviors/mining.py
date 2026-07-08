@@ -1,17 +1,14 @@
 import capabilities.movement as um
 
-
 def mine_line(agent, length):
     """
     Digs a straight line of length blocks, moving relative to current position.
     """
-    next_pos = agent.bot.entity.position.offset(0, -1, 0)
-    next_block = agent.bot.blockAt(next_pos)
-    agent.bot.dig(next_block)
+    next_pos = agent.bot.position + (0, -1, 0)
+    agent.bot.dig(next_pos)
     for _ in range(length):
-        next_pos = agent.bot.entity.position.offset(1, 0, 0)
-        next_block = agent.bot.blockAt(next_pos)
-        agent.bot.dig(next_block)
+        next_pos = agent.bot.position + (1, 0, 0)
+        agent.bot.dig(next_pos)
         um.move_relative_to_self(agent, 1, 0, 0)
 
 
@@ -19,9 +16,9 @@ def burrow_one_block_down_positive_x(agent):
     """
     Digs blocks in positive x and moves down by one block.
     """
-    agent.bot.dig(agent.bot.blockAt(agent.bot.entity.position.offset(1, 1, 0)))
-    agent.bot.dig(agent.bot.blockAt(agent.bot.entity.position.offset(1, 0, 0)))
-    agent.bot.dig(agent.bot.blockAt(agent.bot.entity.position.offset(1, -1, 0)))
+    agent.bot.dig(agent.bot.position + (1, 1, 0))
+    agent.bot.dig(agent.bot.position + (1, 0, 0))
+    agent.bot.dig(agent.bot.position + (1, -1, 0))
     um.move_relative_to_self(agent, 1, -1, 0)
 
 
@@ -43,10 +40,10 @@ def tunnel_forward(agent, length, height=2, direction='x', direction_sign=1):
         raise RuntimeError("Invalid direction.")
         
     for _ in range(length):
-        agent.bot.dig(agent.bot.blockAt(agent.bot.entity.position.offset(xcoord, 1, zcoord)))
-        agent.bot.dig(agent.bot.blockAt(agent.bot.entity.position.offset(xcoord, 0, zcoord)))
+        agent.bot.dig(agent.bot.position + (xcoord, 1, zcoord))
+        agent.bot.dig(agent.bot.position + (xcoord, 0, zcoord))
         if height == 3:
-            agent.bot.dig(agent.bot.blockAt(agent.bot.entity.position.offset(xcoord, 2, zcoord)))
+            agent.bot.dig(agent.bot.position + (xcoord, 2, zcoord))
         um.move_relative_to_self(agent, xcoord, 0, zcoord)
 
 

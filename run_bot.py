@@ -1,5 +1,6 @@
 import json
 import argparse
+import time
 from core.bot import BaseBot
 from core.command_registry import CommandRegistry
 from bots.farmer_bot import FarmerBot
@@ -27,15 +28,17 @@ def main():
 
     server_host = config.get("server_host", "localhost")
     server_port = config.get("server_port", 55556)
+    server_version = config.get("server_version")
     
     print(f"Server Host: {server_host}")
     print(f"Server Port: {server_port}")
+    print(f"Server Version: {server_version}")
     print(f"Bot Type: {args.type}")
 
     if args.type == "farmer":
         print("Starting FarmerBot...")
         # FarmerBot initializes its own registry and triggers internally
-        bot = FarmerBot("farmer-bot", server_host=server_host, server_port=server_port)
+        bot = FarmerBot("farmer-bot", server_host=server_host, server_port=server_port, version=server_version)
     else:
         print("Starting BaseBot...")
         # Setup registry and load standard commands for BaseBot
@@ -48,8 +51,17 @@ def main():
             "pathfinder-bot",
             server_host=server_host,
             server_port=server_port,
-            registry=registry
+            registry=registry,
+            version=server_version
         )
+
+    # Keep the main thread alive so the bot remains connected
+    print("\nBot is successfully running! Press Ctrl+C to disconnect and exit.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nDisconnecting bot and exiting...")
 
 
 if __name__ == "__main__":
