@@ -1,8 +1,14 @@
 import os
 import json
 def get_vec3():
-    from javascript import require
-    return require('vec3').Vec3
+    import sys
+    if "javascript" in sys.modules:
+        try:
+            return sys.modules["javascript"].require("vec3").Vec3
+        except Exception:
+            pass
+    from core.utils.vec3 import Vec3
+    return Vec3
 
 
 

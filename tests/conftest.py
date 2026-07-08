@@ -144,7 +144,24 @@ def require_mock(module_name):
             return mock_data
         return mc_data_builder
     elif module_name == 'mineflayer-pathfinder':
-        from core.bot import PathfinderEmulatorModule
+        class PathfinderEmulatorModule:
+            class goals:
+                class GoalNear:
+                    def __init__(self, x, y, z, range_val=1):
+                        self.x = x
+                        self.y = y
+                        self.z = z
+                        self.range = range_val
+                class GoalBlock:
+                    def __init__(self, x, y, z):
+                        self.x = x
+                        self.y = y
+                        self.z = z
+                        self.range = 0
+            class pathfinder:
+                pass
+            Movements = lambda *args: MagicMock()
+        PathfinderEmulatorModule.pathfinder.goals = PathfinderEmulatorModule.goals
         return PathfinderEmulatorModule
     return MagicMock()
 

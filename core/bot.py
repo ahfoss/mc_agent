@@ -16,192 +16,19 @@ mineflayer_pathfinder = None
 # Global state to share registry for require('minecraft-data')
 _current_registry = None
 
-# Custom Vec3 implementation to emulate JS vec3
-class Vec3:
-    def __init__(self, x=0, y=0, z=0):
-        if isinstance(x, dict):
-            self.x = float(x.get("x", 0))
-            self.y = float(x.get("y", 0))
-            self.z = float(x.get("z", 0))
-        elif hasattr(x, "x") and hasattr(x, "y") and hasattr(x, "z"):
-            self.x = float(getattr(x, "x"))
-            self.y = float(getattr(x, "y"))
-            self.z = float(getattr(x, "z"))
-        else:
-            self.x = float(x)
-            self.y = float(y)
-            self.z = float(z)
+from core.utils.vec3 import Vec3
+from core.utils.block import Block
+from core.utils.events import register_event, unregister_event
+from core.utils.compat import SidecarEntityEmulator, PlayersDict, RegistryItem, RegistryEmulator
 
-    def offset(self, dx, dy, dz):
-        return Vec3(self.x + dx, self.y + dy, self.z + dz)
-
-    def __add__(self, other):
-        if isinstance(other, Vec3):
-            return Vec3(self.x + other.x, self.y + other.y, self.z + other.z)
-        elif isinstance(other, dict):
-            return Vec3(self.x + other.get("x", 0), self.y + other.get("y", 0), self.z + other.get("z", 0))
-        elif isinstance(other, (tuple, list)) and len(other) == 3:
-            return Vec3(self.x + other[0], self.y + other[1], self.z + other[2])
-        return NotImplemented
-
-    def __radd__(self, other):
-        return self.__add__(other)
-
-    def __sub__(self, other):
-        if isinstance(other, Vec3):
-            return Vec3(self.x - other.x, self.y - other.y, self.z - other.z)
-        elif isinstance(other, dict):
-            return Vec3(self.x - other.get("x", 0), self.y - other.get("y", 0), self.z - other.get("z", 0))
-        elif isinstance(other, (tuple, list)) and len(other) == 3:
-            return Vec3(self.x - other[0], self.y - other[1], self.z - other[2])
-        return NotImplemented
-
-    def __rsub__(self, other):
-        if isinstance(other, (tuple, list)) and len(other) == 3:
-            return Vec3(other[0] - self.x, other[1] - self.y, other[2] - self.z)
-        elif isinstance(other, dict):
-            return Vec3(other.get("x", 0) - self.x, other.get("y", 0) - self.y, other.get("z", 0) - self.z)
-        return NotImplemented
-
-    def __eq__(self, other):
-        if not hasattr(other, 'x') or not hasattr(other, 'y') or not hasattr(other, 'z'):
-            return False
-        return self.x == other.x and self.y == other.y and self.z == other.z
-
-    def __str__(self):
-        return f"Vec3({self.x}, {self.y}, {self.z})"
-
-    def __repr__(self):
-        return str(self)
-
-# Registry Item emulation
-class RegistryItem:
-    def __init__(self, name, id_val):
-        self.name = name
-        self.id = id_val
-
-class RegistryEmulator:
-    def __init__(self, items_by_name, blocks_by_name):
-        self.itemsByName = items_by_name
-        self.blocksByName = blocks_by_name
-
-# Mock list with .length property for JS arrays
-class JSList(list):
-    @property
-    def length(self):
-        return len(self)
-
-class Block:
-    def __init__(self, name, position):
-        self.name = name
-        self.position = position
-
-    def __repr__(self):
-        return f"Block({self.name}, {self.position})"
-
-class SidecarEntityEmulator:
-    def __init__(self, parent):
-        self.parent = parent
-
-    @property
-    def position(self):
-        return self.parent.position
-
-class PlayersDict(dict):
-    def __init__(self, parent):
-        super().__init__()
-        self.parent = parent
-
-    def __getitem__(self, key):
-        pos = self.parent.find_player(key)
-        if pos is None:
-            return None
-        class PlayerMock:
-            class EntityMock:
-                def __init__(self, p):
-                    self.position = p
-            def __init__(self, p):
-                self.entity = self.EntityMock(p)
-        return PlayerMock(pos)
-
-# Emulators for direct require module calls
-class PathfinderEmulatorModule:
-    class goals:
-        class GoalNear:
-            def __init__(self, x, y, z, range_val=1):
-                self.x = x
-                self.y = y
-                self.z = z
-                self.range = range_val
-        class GoalBlock:
-            def __init__(self, x, y, z):
-                self.x = x
-                self.y = y
-                self.z = z
-                self.range = 0
-                
-    class pathfinder:
-        pass
-        
-    Movements = lambda *args: MagicMock()
-
-PathfinderEmulatorModule.pathfinder.goals = PathfinderEmulatorModule.goals
-
-# Inject sys.modules['javascript'] emulator at load time (only if not already mocked)
-class MockJavascript:
-    config = MagicMock()
-    @staticmethod
-    def require(name):
-        if name == 'vec3':
-            mock_vec = MagicMock()
-            mock_vec.Vec3 = Vec3
-            return mock_vec
-        elif name == 'minecraft-data':
-            return lambda version: _current_registry
-        elif name == 'mineflayer-pathfinder':
-            return PathfinderEmulatorModule
-        return MagicMock()
-
-existing_js = sys.modules.get('javascript')
-is_real_mock = existing_js is not None and type(existing_js).__name__ in ('MagicMock', 'Mock')
-
-if not is_real_mock:
-    sys.modules['javascript'] = MockJavascript
+# Re-export Vec3 for backward compatibility in imports
+Vec3 = Vec3
 
 from core.memory import Memory
 
-def _get_mineflayer():
-    if globals().get('mineflayer') is not None:
-        return globals()['mineflayer']
-    return require('mineflayer')
-
-def _get_pathfinder():
-    if globals().get('mineflayer_pathfinder') is not None:
-        return globals()['mineflayer_pathfinder']
-    return require('mineflayer-pathfinder')
-
+# Require wrapper for unit test patching compatibility
 def require(name):
-    if _current_registry is not None:
-        return MockJavascript.require(name)
-    if is_real_mock:
-        return existing_js.require(name)
-    if name in ('vec3', 'minecraft-data', 'mineflayer-pathfinder'):
-        return MockJavascript.require(name)
-    raise NotImplementedError(f"JavaScript module '{name}' is not supported in decoupled sidecar mode.")
-
-# Event registration helpers
-def register_event(emitter, event, callback):
-    if not hasattr(emitter, '_listeners') or not isinstance(emitter._listeners, dict):
-        emitter._listeners = {}
-    if event not in emitter._listeners:
-        emitter._listeners[event] = []
-    if callback not in emitter._listeners[event]:
-        emitter._listeners[event].append(callback)
-
-def unregister_event(emitter, event, callback):
-    if hasattr(emitter, '_listeners') and isinstance(emitter._listeners, dict) and event in emitter._listeners:
-        if callback in emitter._listeners[event]:
-            emitter._listeners[event].remove(callback)
+    pass
 
 # BaseBot Class
 class BaseBot:
@@ -278,10 +105,12 @@ class BaseBot:
         is_mock_mf = globals().get('mineflayer') is not None
         
         if is_mock_mf:
-            mf = _get_mineflayer()
+            mf = globals().get('mineflayer')
             self.bot = mf.createBot(self.bot_args)
             self.start_events()
-            self.bot.loadPlugin(_get_pathfinder().pathfinder)
+            pf = globals().get('mineflayer_pathfinder')
+            if pf:
+                self.bot.loadPlugin(pf.pathfinder)
             return
 
         self.bot = self
@@ -366,21 +195,10 @@ class BaseBot:
             self.log(f"[Sidecar Error] {line.strip()}")
 
     def _handle_sidecar_event(self, msg):
-        global _current_registry
         event_name = msg.get("event")
         
         if event_name == "spawn":
             self.bot.version = msg.get("version")
-            reg = msg.get("registry", {})
-            
-            self._items_by_name = {name: RegistryItem(name, data["id"]) for name, data in reg.get("itemsByName", {}).items()}
-            self._blocks_by_name = {name: RegistryItem(name, data["id"]) for name, data in reg.get("blocksByName", {}).items()}
-            self._id_to_name = {data["id"]: name for name, data in reg.get("itemsByName", {}).items()}
-            
-            _current_registry = RegistryEmulator(self._items_by_name, self._blocks_by_name)
-            self.bot.registry = _current_registry
-            self.mcData = _current_registry
-
             self.ready = True
             self._trigger_event("spawn")
             
@@ -554,15 +372,8 @@ class BaseBot:
         return None
 
     def find_block(self, block_name, max_distance=6):
-        mcData = self.registry
-        block_id = None
-        if hasattr(mcData, "blocksByName") and block_name in mcData.blocksByName:
-            block_id = mcData.blocksByName[block_name].id
-        else:
-            block_id = self._blocks_by_name.get(block_name, RegistryItem(block_name, 4)).id
-            
         data = self.send_command("find_block", {
-            "matching": block_id,
+            "matching": block_name,
             "maxDistance": max_distance
         })
         block_data = data.get("block")

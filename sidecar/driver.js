@@ -40,14 +40,8 @@ function sendResponse(id, success, data = {}, error = null) {
 
 // Bot lifecycle events
 bot.once('spawn', () => {
-  // Get minecraft-data registries
-  const mcData = require('minecraft-data')(bot.version);
   sendEvent('spawn', {
-    version: bot.version,
-    registry: {
-      itemsByName: mcData.itemsByName,
-      blocksByName: mcData.blocksByName
-    }
+    version: bot.version
   });
 });
 
