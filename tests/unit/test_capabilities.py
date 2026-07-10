@@ -79,8 +79,8 @@ def test_move_relative_to_self():
     
     um.move_relative_to_self(mock_agent, 1, 0, -2)
     
-    # Target absolute position should be 11, 64, 8
-    mock_bot.move_to.assert_called_once_with(MockVec3(11, 64, 8), range_val=0)
+    # Target absolute position should be aligned to block center: 11.5, 64, 8.5
+    mock_bot.move_to.assert_called_once_with(MockVec3(11.5, 64, 8.5), range_val=0)
 
 
 # ==================== CONSTRUCTION CAPABILITY TESTS ====================
@@ -116,6 +116,37 @@ def test_place_block_on_ground_one_forward():
         mock_place.assert_called_once_with(mock_agent, "dirt", 1, -1, 0)
 
 
+def test_place_block_relative_to_block_success():
+    mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    
+    mock_bot.get_inventory.return_value = {"furnace": 1}
+    mock_agent.bot = mock_bot
+    
+    ref_pos = MockVec3(100, 60, 100)
+    res = ucon.place_block_relative_to_block(mock_agent, "furnace", ref_pos, 1, 0, 0)
+    
+    assert res is True
+    # Target pos is ref_pos + (1, 0, 0) = (101, 60, 100)
+    # Reference block to place against is target_pos - (0, 1, 0) = (101, 59, 100)
+    mock_bot.place_block.assert_called_once_with("furnace", MockVec3(101, 59, 100), MockVec3(0, 1, 0))
+    mock_bot.chat.assert_called_with("furnace placed relative to block!")
+
+
+def test_place_block_relative_to_block_missing():
+    mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    
+    mock_bot.get_inventory.return_value = {}
+    mock_agent.bot = mock_bot
+    
+    ref_pos = MockVec3(100, 60, 100)
+    res = ucon.place_block_relative_to_block(mock_agent, "furnace", ref_pos, 1, 0, 0)
+    
+    assert res is False
+    mock_bot.chat.assert_called_with("I don't have a furnace to place.")
+
+
 # ==================== CRAFTING CAPABILITY TESTS ====================
 
 def test_craft_direct_success():
@@ -143,8 +174,9 @@ def test_craft_direct_no_recipe():
 def test_craft_tree():
     with patch('capabilities.crafting.craft_direct', return_value=True) as mock_direct:
         mock_agent = MagicMock()
+        mock_agent.bot.get_inventory.return_value = {"oak_planks": 8}
         assert uc.craft_tree(mock_agent, "chest") is True
-        mock_direct.assert_called_once_with(mock_agent, "chest")
+        mock_direct.assert_called_once_with(mock_agent, "chest", 1, None)
 
 def test_craft_any_door_no_crafting_area():
     mock_agent = MagicMock()
@@ -157,7 +189,7 @@ def test_craft_any_door_no_table_block():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     
-    mock_agent.memory.retrieve.return_value = MockVec3(10, 64, 10)
+    mock_agent.memory.retrieve.side_effect = lambda key: MockVec3(10, 64, 10) if key == "crafting_area" else None
     mock_bot.find_block.return_value = None
     mock_agent.bot = mock_bot
     
@@ -168,15 +200,40 @@ def test_craft_any_door_no_table_block():
 def test_craft_any_door_success():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
+    mock_bot.get_inventory.return_value = {"oak_planks": 6}
+    mock_agent.bot = mock_bot
     
-    mock_agent.memory.retrieve.return_value = MockVec3(10, 64, 10)
+    mock_agent.memory.retrieve.side_effect = lambda key: MockVec3(10, 64, 10) if key == "crafting_area" else None
     
     table_pos = MockVec3(11, 64, 10)
     mock_bot.find_block.return_value = table_pos
     mock_bot.craft.return_value = True
-    mock_agent.bot = mock_bot
     
     res = uc.craft_any_door(mock_agent, quantity=1)
     
     assert res == "oak_door"
     mock_bot.craft.assert_any_call("oak_door", 1, table_pos)
+
+
+def test_craft_any_door_memory_success():
+    mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    mock_bot.get_inventory.return_value = {"oak_planks": 6}
+    mock_agent.bot = mock_bot
+    
+    # Coordinates in memory (both area and exact table block position)
+    def retrieve_mock(key):
+        if key == "crafting_area":
+            return MockVec3(10, 64, 10)
+        elif key == "crafting_table_position":
+            return MockVec3(10, 63, 11)
+            return None
+    mock_agent.memory.retrieve.side_effect = retrieve_mock
+    mock_bot.craft.return_value = True
+    
+    res = uc.craft_any_door(mock_agent, quantity=1)
+    
+    assert res == "oak_door"
+    # Should use MockVec3(10, 63, 11) retrieved from memory, never calling find_block
+    mock_bot.find_block.assert_not_called()
+    mock_bot.craft.assert_any_call("oak_door", 1, MockVec3(10, 63, 11))

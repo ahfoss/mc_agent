@@ -165,7 +165,7 @@ def test_integration_build_and_furnish_shelter(integration_server):
         # 3. Test "build shelter" command execution via chat emission
         print("Testing command: 'build shelter'...")
         bot_agent.bot.emit("chat", "Player1", "build shelter")
-        time.sleep(2)  # Give time for command dispatch and processing
+        time.sleep(20.0)  # Give time for staircase and chamber excavation to complete
     
         # Check if "shelter_location" is registered in the bot memory
         shelter_loc = bot_agent.memory.retrieve("shelter_location")
@@ -175,8 +175,24 @@ def test_integration_build_and_furnish_shelter(integration_server):
     
         # 4. Test "furnish shelter" command execution via chat emission
         print("Testing command: 'furnish shelter'...")
+        # Give the bot materials so it has items to craft the table, door, furnace, and chests
+        bot_agent.bot.chat("/give @s oak_planks 64")
+        bot_agent.bot.chat("/give @s cobblestone 64")
+        time.sleep(1.0)
+        
         bot_agent.bot.emit("chat", "Player1", "furnish shelter")
-        time.sleep(2)
+        
+        # Wait up to 30 seconds for the bot to place the crafting table and store the adjacent coordinate in memory
+        timeout = 30
+        start_time = time.time()
+        adjacent_spot = None
+        while (time.time() - start_time) < timeout:
+            adjacent_spot = bot_agent.memory.retrieve("adjacent_crafting_table")
+            if adjacent_spot is not None:
+                break
+            time.sleep(1)
+            
+        assert adjacent_spot is not None, "Bot failed to store 'adjacent_crafting_table' in memory (furnish shelter failed or timed out)."
     
     finally:
         # Clean up bot connection

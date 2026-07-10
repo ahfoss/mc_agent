@@ -15,14 +15,15 @@ class FarmerBot(BaseBot):
         # Initialize a custom command registry for the Farmer Bot
         registry = CommandRegistry()
         
-        # Register standard movement, construction, and mining commands
         from commands.movement_cmds import register_commands as reg_move
         from commands.construction_cmds import register_commands as reg_const
         from commands.mining_cmds import register_commands as reg_mine
+        from commands.items_cmds import register_commands as reg_items
         
         reg_move(registry)
         reg_const(registry)
         reg_mine(registry)
+        reg_items(registry)
         
         # Register specialized farming commands
         registry.register("harvest", handle_harvest)

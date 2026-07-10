@@ -4,7 +4,7 @@ import time
 from core.bot import BaseBot
 from core.command_registry import CommandRegistry
 from bots.farmer_bot import FarmerBot
-from commands import movement_cmds, construction_cmds, mining_cmds
+from commands import movement_cmds, construction_cmds, mining_cmds, items_cmds
 
 
 def main():
@@ -46,6 +46,7 @@ def main():
         movement_cmds.register_commands(registry)
         construction_cmds.register_commands(registry)
         mining_cmds.register_commands(registry)
+        items_cmds.register_commands(registry)
         
         bot = BaseBot(
             "pathfinder-bot",

@@ -4,6 +4,33 @@ A modular, extensible Python framework for creating autonomous Minecraft bots us
 
 ---
 
+## Bot chat commands
+
+### Basic commands
+ - `come to me`: Moves the bot to the position of the player who sent the command.
+ - `tell inventory`: Bot lists items in inventory
+ - `quit`: Disconnects the bot from the server.
+
+### Startup commands
+ - `build shelter`: Builds a shelter for the bot.
+ - `furnish shelter`: Furnishes the shelter with a crafting table, furnace, and chests.
+
+### Roadmap
+ - `tell location` to get bot location.
+
+Mining commands to actually get the resources for initial furnish shelter.
+
+Additional mining commands to strip mine for iron, coal, and other resources.
+
+Hunting bot to get food and roast.
+
+Lumberjack bot to get wood.
+
+Farmer bot once an iron bucket is attained.
+
+Mayor to orchestrate resources and assign tasks to bots.
+
+
 ## Architecture Overview
 
 The framework separates high-level brain logic (Python) from high-frequency game interaction and standard Minecraft protocol handling (Node.js). They communicate asynchronously over stdin/stdout using a typed JSON payload IPC channel.

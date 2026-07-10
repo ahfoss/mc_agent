@@ -161,51 +161,48 @@ rl.on('line', async (line) => {
       }
 
       case 'pathfind': {
-        const { x, y, z, range } = params;
+        const { x, y, z, range, can_dig } = params;
         const goalRange = range !== undefined ? range : 1;
         const defaultMovements = new Movements(bot);
+        defaultMovements.canDig = can_dig !== undefined ? can_dig : false;
+        defaultMovements.canOpenDoors = true;
         bot.pathfinder.setMovements(defaultMovements);
 
-        await new Promise((resolve, reject) => {
-          bot.pathfinder.setGoal(new goals.GoalNear(x, y, z, goalRange));
+        let goal;
+        if (goalRange === 0) {
+          goal = new goals.GoalBlock(x, y, z);
+        } else {
+          goal = new goals.GoalNear(x, y, z, goalRange);
+        }
 
-          function onGoalReached() {
-            cleanup();
-            resolve();
-          }
-          function onGoalFailed(err) {
-            cleanup();
-            reject(err);
-          }
-          function cleanup() {
-            bot.removeListener('goal_reached', onGoalReached);
-            bot.removeListener('path_update', onPathUpdate);
-          }
-          let pathUpdates = 0;
-          function onPathUpdate(results) {
-            pathUpdates++;
-            if (results.status === 'noPath' && pathUpdates > 5) {
-              cleanup();
-              reject(new Error('No path found to goal'));
-            }
-          }
-          bot.on('goal_reached', onGoalReached);
-          bot.on('path_update', onPathUpdate);
-        });
-
-        sendResponse(id, true);
+        try {
+          await bot.pathfinder.goto(goal);
+          sendResponse(id, true);
+        } catch (err) {
+          sendResponse(id, false, {}, err.message);
+        }
         break;
       }
 
       case 'dig': {
         const { x, y, z } = params;
         const block = bot.blockAt(new vec3.Vec3(x, y, z));
+        console.log(`[DEBUG SIDECAR dig] Bot position: ${bot.entity.position.toString()}`);
+        console.log(`[DEBUG SIDECAR dig] Target block coordinates: ${x}, ${y}, ${z}`);
         if (!block) {
+          console.log(`[DEBUG SIDECAR dig] Block not found at ${x}, ${y}, ${z}`);
           sendResponse(id, false, {}, 'Block not found');
           break;
         }
-        await bot.dig(block);
-        sendResponse(id, true);
+        console.log(`[DEBUG SIDECAR dig] Found block: ${block.name} (type: ${block.type})`);
+        try {
+          await bot.dig(block);
+          console.log(`[DEBUG SIDECAR dig] Digging successful for block: ${block.name}`);
+          sendResponse(id, true);
+        } catch (err) {
+          console.error(`[DEBUG SIDECAR dig] Digging failed for block ${block.name}: ${err.message}`);
+          sendResponse(id, false, {}, err.message);
+        }
         break;
       }
 
@@ -325,6 +322,77 @@ rl.on('line', async (line) => {
         }
         break;
       }
+
+      case 'smelt': {
+        const { furnace_x, furnace_y, furnace_z, input_item_name, fuel_item_name, quantity, input_count, fuel_count } = params;
+        const mcData = require('minecraft-data')(bot.version);
+        
+        const furnaceBlock = bot.blockAt(new vec3.Vec3(furnace_x, furnace_y, furnace_z));
+        if (!furnaceBlock || furnaceBlock.name !== 'furnace') {
+          sendResponse(id, false, {}, 'Furnace block not found at specified coordinates');
+          break;
+        }
+
+        const furnace = await bot.openFurnace(furnaceBlock);
+        
+        const inputItemInfo = mcData.itemsByName[input_item_name];
+        const fuelItemInfo = mcData.itemsByName[fuel_item_name];
+        if (!inputItemInfo) {
+          furnace.close();
+          sendResponse(id, false, {}, `Invalid input item name: ${input_item_name}`);
+          break;
+        }
+        if (!fuelItemInfo) {
+          furnace.close();
+          sendResponse(id, false, {}, `Invalid fuel item name: ${fuel_item_name}`);
+          break;
+        }
+
+        const input_id = inputItemInfo.id;
+        const fuel_id = fuelItemInfo.id;
+
+        const resolved_input_count = input_count !== undefined ? input_count : (quantity !== undefined ? quantity : 1);
+        const resolved_fuel_count = fuel_count !== undefined ? fuel_count : (quantity !== undefined ? quantity : 1);
+
+        try {
+          await furnace.putFuel(fuel_id, null, resolved_fuel_count);
+          await furnace.putInput(input_id, null, resolved_input_count);
+        } catch (err) {
+          furnace.close();
+          sendResponse(id, false, {}, `Failed to load furnace: ${err.message}`);
+          break;
+        }
+
+        let expectedOutput = "charcoal";
+        const totalTimeout = 15000 * resolved_input_count;
+        const startTime = Date.now();
+        let success = false;
+        
+        while (Date.now() - startTime < totalTimeout) {
+          const outItem = furnace.outputItem();
+          if (outItem && outItem.name === expectedOutput && outItem.count >= resolved_input_count) {
+            success = true;
+            break;
+          }
+          await new Promise(r => setTimeout(r, 500));
+        }
+
+        if (success) {
+          try {
+            await furnace.takeOutput();
+            furnace.close();
+            sendResponse(id, true);
+          } catch (err) {
+            furnace.close();
+            sendResponse(id, false, {}, `Failed to retrieve output: ${err.message}`);
+          }
+        } else {
+          furnace.close();
+          sendResponse(id, false, {}, 'Smelting timed out or failed');
+        }
+        break;
+      }
+
 
       default:
         sendResponse(id, false, {}, 'Unknown command type: ' + type);

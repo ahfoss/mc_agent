@@ -1,4 +1,5 @@
 import sys
+import math
 import os
 import json
 import time
@@ -233,7 +234,7 @@ class BaseBot:
                     self.log(f"Error in event listener {event_name}: {e}")
             threading.Thread(target=run_cb, daemon=True).start()
 
-    def send_command(self, type_name, params=None):
+    def send_command(self, type_name, params=None, timeout=45.0):
         if not hasattr(self, 'proc') or self.proc.poll() is not None:
             return {}
 
@@ -262,9 +263,9 @@ class BaseBot:
         except Exception as e:
             raise ConnectionError(f"Failed to communicate with sidecar: {e}")
 
-        success = event.wait(timeout=45.0)
+        success = event.wait(timeout=timeout)
         if not success:
-            raise TimeoutError(f"Sidecar command '{type_name}' timed out after 45 seconds.")
+            raise TimeoutError(f"Sidecar command '{type_name}' timed out after {timeout} seconds.")
 
         res = future["response"]
         if os.environ.get("DEBUG_IO") == "1":
@@ -365,7 +366,7 @@ class BaseBot:
         x = pos.x if hasattr(pos, "x") else pos.get("x")
         y = pos.y if hasattr(pos, "y") else pos.get("y")
         z = pos.z if hasattr(pos, "z") else pos.get("z")
-        data = self.send_command("block_at", {"x": int(x), "y": int(y), "z": int(z)})
+        data = self.send_command("block_at", {"x": math.floor(x), "y": math.floor(y), "z": math.floor(z)})
         block_data = data.get("block")
         if block_data:
             return Block(block_data["name"], Vec3(block_data["position"]))
@@ -397,9 +398,9 @@ class BaseBot:
         y = target.y if hasattr(target, "y") else target.get("y")
         z = target.z if hasattr(target, "z") else target.get("z")
         self.send_command("pathfind", {
-            "x": int(x),
-            "y": int(y),
-            "z": int(z),
+            "x": float(x),
+            "y": float(y),
+            "z": float(z),
             "range": range_val,
             "can_dig": can_dig
         })
@@ -420,9 +421,9 @@ class BaseBot:
         target_z = pos["z"] if isinstance(pos, dict) else getattr(pos, "z")
         
         self.send_command("dig", {
-            "x": int(target_x),
-            "y": int(target_y),
-            "z": int(target_z)
+            "x": math.floor(target_x),
+            "y": math.floor(target_y),
+            "z": math.floor(target_z)
         })
         return True
 
@@ -437,12 +438,12 @@ class BaseBot:
         
         self.send_command("place", {
             "item_name": item_name,
-            "x": int(x),
-            "y": int(y),
-            "z": int(z),
-            "x_offset": int(face_x),
-            "y_offset": int(face_y),
-            "z_offset": int(face_z)
+            "x": math.floor(x),
+            "y": math.floor(y),
+            "z": math.floor(z),
+            "x_offset": math.floor(face_x) if face_x is not None else 0,
+            "y_offset": math.floor(face_y) if face_y is not None else 1,
+            "z_offset": math.floor(face_z) if face_z is not None else 0
         })
         return True
 
@@ -457,9 +458,9 @@ class BaseBot:
         table_pos_dict = None
         if table_pos:
             table_pos_dict = {
-                "x": table_pos.x if hasattr(table_pos, "x") else table_pos.get("x"),
-                "y": table_pos.y if hasattr(table_pos, "y") else table_pos.get("y"),
-                "z": table_pos.z if hasattr(table_pos, "z") else table_pos.get("z")
+                "x": math.floor(table_pos.x if hasattr(table_pos, "x") else table_pos.get("x")),
+                "y": math.floor(table_pos.y if hasattr(table_pos, "y") else table_pos.get("y")),
+                "z": math.floor(table_pos.z if hasattr(table_pos, "z") else table_pos.get("z"))
             }
         self.send_command("craft", {
             "item_name": item_name,
