@@ -238,30 +238,29 @@ class BaseBot:
         if not hasattr(self, 'proc') or self.proc.poll() is not None:
             return {}
 
-        with self._cmd_lock:
-            cmd_id = self._next_cmd_id
-            self._next_cmd_id += 1
-
         event = threading.Event()
         future = {"event": event, "response": None}
 
         with self._cmd_lock:
+            cmd_id = self._next_cmd_id
+            self._next_cmd_id += 1
             self._cmd_futures[cmd_id] = future
 
-        cmd = {
-            "id": cmd_id,
-            "type": type_name,
-            "params": params or {}
-        }
+            cmd = {
+                "id": cmd_id,
+                "type": type_name,
+                "params": params or {}
+            }
 
-        if os.environ.get("DEBUG_IO") == "1":
-            self.log(f"[DEBUG IPC] Write: {json.dumps(cmd)}")
+            if os.environ.get("DEBUG_IO") == "1":
+                self.log(f"[DEBUG IPC] Write: {json.dumps(cmd)}")
 
-        try:
-            self.proc.stdin.write(json.dumps(cmd) + "\n")
-            self.proc.stdin.flush()
-        except Exception as e:
-            raise ConnectionError(f"Failed to communicate with sidecar: {e}")
+            try:
+                self.proc.stdin.write(json.dumps(cmd) + "\n")
+                self.proc.stdin.flush()
+            except Exception as e:
+                self._cmd_futures.pop(cmd_id, None)
+                raise ConnectionError(f"Failed to communicate with sidecar: {e}")
 
         success = event.wait(timeout=timeout)
         if not success:

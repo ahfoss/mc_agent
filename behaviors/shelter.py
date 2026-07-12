@@ -1,4 +1,5 @@
 
+from _pytest import pytester_assertions
 import time
 import math
 from typing import Any
@@ -30,6 +31,10 @@ def furnish_shelter1(agent: Any) -> None:
     if not shelter_location:
         agent.bot.chat("Coordinates not found in memory. Have you already built the shelter?")
         return
+
+    # Floor coordinates to integer values to avoid pathfinding errors with floating offsets
+    Vec3Class = get_vec3()
+    shelter_location = Vec3Class(math.floor(shelter_location.x), math.floor(shelter_location.y), math.floor(shelter_location.z))
 
     # Navigate to shelter plus offset inside
     print(f"{shelter_location=}")
@@ -260,13 +265,37 @@ def furnish_shelter1(agent: Any) -> None:
         else:
             agent.bot.chat("Missing logs or charcoal fuel to smelt 5 charcoal.")
 
-    # Craft four torches
-    if ui.get_item_count(agent, "torch") < 4:
-        agent.bot.chat("Attempting to craft four torches recursively...")
-        if not uc.craft_tree(agent, "torch", quantity=4, crafting_table_loc=crafting_table_pos):
+    # Craft three torches
+    if ui.get_item_count(agent, "torch") < 3:
+        agent.bot.chat("Attempting to craft three torches recursively...")
+        if not uc.craft_tree(agent, "torch", quantity=3, crafting_table_loc=crafting_table_pos):
             agent.bot.chat("Failed to craft torches recursively.")
 
-    # Place four torches
+    # Place three torches
+    adjacent_table = agent.memory.retrieve("adjacent_crafting_table")
+    if adjacent_table:
+        Vec3Class = get_vec3()
+        adjacent_table = Vec3Class(math.floor(adjacent_table.x), math.floor(adjacent_table.y), math.floor(adjacent_table.z))
+        
+        #torch_offsets = [(1, 2, 2), (7, 2, -2), (1, 2, -5)]
+        torch_offsets = [
+            # Block location, standing location, block face to use.
+            ((1, 2, 3), (1, 0, 2), (0, 0, -1)),
+            ((8, 2, -2), (7, 0, -2), (-1, 0, 0)),
+            ((1, 2, -6), (1, 0, -5), (0, 0, 1)),
+        ]
+        #for offset in torch_offsets:
+        for torch_offset, stand_offset, iface in torch_offsets:
+            torch_abs = adjacent_table + torch_offset
+            block = agent.bot.get_block(torch_abs)
+            if block is None or "torch" not in block.name:
+                # Stand near the target position on the floor
+                um.move_absolute(agent, adjacent_table + stand_offset)
+                
+                if ui.has_item(agent, "torch", 1):
+                    agent.bot.chat(f"Placing torch at {torch_abs}...")
+                    agent.bot.place_block("torch", torch_abs, iface)
+                else:
+                    agent.bot.chat("No torches left in inventory to place.")
 
     agent.bot.chat("Shelter furnishing sequence completed.")
-

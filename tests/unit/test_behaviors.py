@@ -189,7 +189,7 @@ def test_furnish_shelter1_success():
     # Mock memory retrieval
     def retrieve_mock(key):
         if key == "shelter_location":
-            return MockVec3(100, 64, 100)
+            return MockVec3(93, 62, 100)
         elif key == "crafting_table_position":
             return MockVec3(100, 56, 106)
         elif key == "adjacent_crafting_table":
@@ -210,7 +210,7 @@ def test_furnish_shelter1_success():
          bs.furnish_shelter1(mock_agent)
          
          # 1. Navigation
-         mock_move_abs.assert_any_call(mock_agent, MockVec3(109, 56, 105))
+         mock_move_abs.assert_any_call(mock_agent, MockVec3(100, 56, 105))
          
          # 2. Craft & Place crafting table
          mock_craft_tree.assert_any_call(mock_agent, "crafting_table")
@@ -239,7 +239,7 @@ def test_furnish_shelter1_success():
          mock_place_rel_block.assert_any_call(mock_agent, "chest", MockVec3(100, 56, 106), 5, 0, 0)
          
          # 6. Craft torches recursively
-         mock_craft_tree.assert_any_call(mock_agent, "torch", quantity=4, crafting_table_loc=MockVec3(100, 56, 106))
+         mock_craft_tree.assert_any_call(mock_agent, "torch", quantity=3, crafting_table_loc=MockVec3(100, 56, 106))
 
 def test_furnish_shelter1_door_craft_fails():
     mock_agent = MagicMock()
@@ -252,7 +252,7 @@ def test_furnish_shelter1_door_craft_fails():
     # Mock memory retrieval
     def retrieve_mock(key):
         if key == "shelter_location":
-            return MockVec3(100, 64, 100)
+            return MockVec3(93, 62, 100)
         elif key == "crafting_table_position":
             return MockVec3(100, 56, 106)
         elif key == "adjacent_crafting_table":
@@ -346,7 +346,7 @@ def test_furnish_shelter1_smelt_charcoal():
     # Mock memory retrieval
     def retrieve_mock(key):
         if key == "shelter_location":
-            return MockVec3(100, 64, 100)
+            return MockVec3(93, 62, 100)
         elif key == "crafting_table_position":
             return MockVec3(100, 56, 106)
         elif key == "adjacent_crafting_table":
@@ -392,4 +392,4 @@ def test_furnish_shelter1_smelt_charcoal():
          }, timeout=75.0)
          
          # Verify recursive torch crafting call
-         mock_craft_tree.assert_any_call(mock_agent, "torch", quantity=4, crafting_table_loc=MockVec3(100, 56, 106))
+         mock_craft_tree.assert_any_call(mock_agent, "torch", quantity=3, crafting_table_loc=MockVec3(100, 56, 106))

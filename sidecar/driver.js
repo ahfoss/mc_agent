@@ -49,10 +49,6 @@ bot.on('chat', (username, message) => {
   sendEvent('chat', { username, message });
 });
 
-bot.on('playerChat', (username, message) => {
-  sendEvent('chat', { username, message });
-});
-
 bot.on('end', (reason) => {
   sendEvent('end', { reason });
   process.exit(0);
@@ -212,18 +208,45 @@ rl.on('line', async (line) => {
         const item_id = mcData.itemsByName[item_name].id;
         const item = bot.inventory.findInventoryItem(item_id, null);
         if (!item) {
+          console.error(`[DEBUG PLACE ERROR] Item ${item_name} not found in inventory`);
           sendResponse(id, false, {}, `Item ${item_name} not found in inventory`);
           break;
         }
+
+        console.log(`[DEBUG PLACE] Equipping ${item_name}...`);
         await bot.equip(item, 'hand');
+        console.log(`[DEBUG PLACE] Held item after equip: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
+
         const refBlock = bot.blockAt(new vec3.Vec3(x, y, z));
         if (!refBlock) {
+          console.error(`[DEBUG PLACE ERROR] Reference block not found at (${x}, ${y}, ${z})`);
           sendResponse(id, false, {}, 'Reference block not found');
           break;
         }
+
         const faceVec = new vec3.Vec3(x_offset || 0, y_offset || 1, z_offset || 0);
-        await bot.placeBlock(refBlock, faceVec);
-        sendResponse(id, true);
+        const targetPos = refBlock.position.plus(faceVec);
+        const targetBlock = bot.blockAt(targetPos);
+        const targetAboveBlock = bot.blockAt(targetPos.offset(0, 1, 0));
+
+        console.log(`[DEBUG PLACE] Reference block: ${refBlock.name} (type: ${refBlock.type}) at ${refBlock.position.toString()}`);
+        console.log(`[DEBUG PLACE] Face vector: ${faceVec.toString()}`);
+        console.log(`[DEBUG PLACE] Target position: ${targetPos.toString()} is currently ${targetBlock ? targetBlock.name : 'unknown'}`);
+        console.log(`[DEBUG PLACE] Target above position: ${targetPos.offset(0, 1, 0).toString()} is currently ${targetAboveBlock ? targetAboveBlock.name : 'unknown'}`);
+        console.log(`[DEBUG PLACE] Bot position: ${bot.entity.position.toString()}`);
+
+        console.log(`[DEBUG PLACE] Forcing lookAt target block...`);
+        await bot.lookAt(refBlock.position.offset(0.5, 0.5, 0.5));
+
+        try {
+          console.log(`[DEBUG PLACE] Calling bot.placeBlock...`);
+          await bot.placeBlock(refBlock, faceVec);
+          console.log(`[DEBUG PLACE] bot.placeBlock resolved successfully!`);
+          sendResponse(id, true);
+        } catch (err) {
+          console.error(`[DEBUG PLACE ERROR] bot.placeBlock failed: ${err.message}`);
+          sendResponse(id, false, {}, err.message);
+        }
         break;
       }
 
@@ -263,7 +286,7 @@ rl.on('line', async (line) => {
       case 'craft': {
         const { item_name, item_id, quantity, crafting_table_pos } = params;
         const mcData = require('minecraft-data')(bot.version);
-        
+
         let resolved_id;
         if (item_id !== undefined && item_id !== null) {
           resolved_id = item_id;
@@ -326,7 +349,7 @@ rl.on('line', async (line) => {
       case 'smelt': {
         const { furnace_x, furnace_y, furnace_z, input_item_name, fuel_item_name, quantity, input_count, fuel_count } = params;
         const mcData = require('minecraft-data')(bot.version);
-        
+
         const furnaceBlock = bot.blockAt(new vec3.Vec3(furnace_x, furnace_y, furnace_z));
         if (!furnaceBlock || furnaceBlock.name !== 'furnace') {
           sendResponse(id, false, {}, 'Furnace block not found at specified coordinates');
@@ -334,7 +357,7 @@ rl.on('line', async (line) => {
         }
 
         const furnace = await bot.openFurnace(furnaceBlock);
-        
+
         const inputItemInfo = mcData.itemsByName[input_item_name];
         const fuelItemInfo = mcData.itemsByName[fuel_item_name];
         if (!inputItemInfo) {
@@ -367,7 +390,7 @@ rl.on('line', async (line) => {
         const totalTimeout = 15000 * resolved_input_count;
         const startTime = Date.now();
         let success = false;
-        
+
         while (Date.now() - startTime < totalTimeout) {
           const outItem = furnace.outputItem();
           if (outItem && outItem.name === expectedOutput && outItem.count >= resolved_input_count) {
