@@ -84,7 +84,9 @@ rl.on('line', async (line) => {
           position: pos ? { x: pos.x, y: pos.y, z: pos.z } : null,
           inventory: inv,
           health: bot.health,
-          food: bot.food
+          food: bot.food,
+          window_open: bot.currentWindow !== null && bot.currentWindow !== undefined,
+          held_item: bot.heldItem ? bot.heldItem.name : null
         });
         break;
       }
@@ -213,6 +215,11 @@ rl.on('line', async (line) => {
           break;
         }
 
+        if (bot.currentWindow) {
+          console.log('[DEBUG PLACE] Closing active window before equip...');
+          bot.closeWindow(bot.currentWindow);
+        }
+
         console.log(`[DEBUG PLACE] Equipping ${item_name}...`);
         await bot.equip(item, 'hand');
         console.log(`[DEBUG PLACE] Held item after equip: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
@@ -224,7 +231,11 @@ rl.on('line', async (line) => {
           break;
         }
 
-        const faceVec = new vec3.Vec3(x_offset || 0, y_offset || 1, z_offset || 0);
+        const faceVec = new vec3.Vec3(
+          x_offset !== undefined ? x_offset : 0,
+          y_offset !== undefined ? y_offset : 1,
+          z_offset !== undefined ? z_offset : 0
+        );
         const targetPos = refBlock.position.plus(faceVec);
         const targetBlock = bot.blockAt(targetPos);
         const targetAboveBlock = bot.blockAt(targetPos.offset(0, 1, 0));
@@ -235,8 +246,13 @@ rl.on('line', async (line) => {
         console.log(`[DEBUG PLACE] Target above position: ${targetPos.offset(0, 1, 0).toString()} is currently ${targetAboveBlock ? targetAboveBlock.name : 'unknown'}`);
         console.log(`[DEBUG PLACE] Bot position: ${bot.entity.position.toString()}`);
 
-        console.log(`[DEBUG PLACE] Forcing lookAt target block...`);
-        await bot.lookAt(refBlock.position.offset(0.5, 0.5, 0.5));
+        console.log(`[DEBUG PLACE] Forcing lookAt target block face...`);
+        const faceCenter = refBlock.position.offset(
+          0.5 + faceVec.x * 0.5,
+          0.5 + faceVec.y * 0.5,
+          0.5 + faceVec.z * 0.5
+        );
+        await bot.lookAt(faceCenter);
 
         try {
           console.log(`[DEBUG PLACE] Calling bot.placeBlock...`);
@@ -258,6 +274,10 @@ rl.on('line', async (line) => {
         if (!item) {
           sendResponse(id, false, {}, `Item ${item_name} not found`);
           break;
+        }
+        if (bot.currentWindow) {
+          console.log('[DEBUG EQUIP] Closing active window before equip...');
+          bot.closeWindow(bot.currentWindow);
         }
         const dest = (destination === 'mainHand') ? 'hand' : (destination || 'hand');
         await bot.equip(item, dest);
@@ -342,6 +362,75 @@ rl.on('line', async (line) => {
           sendResponse(id, true);
         } else {
           sendResponse(id, false, {}, result.error);
+        }
+        break;
+      }
+
+      case 'test_case_1': {
+        const { x, y, z } = params;
+        const ct_block = bot.blockAt(new vec3.Vec3(x, y, z));
+        if (!ct_block || ct_block.name !== 'crafting_table') {
+          sendResponse(id, false, {}, 'No crafting table found at specified coordinates');
+          break;
+        }
+
+        try {
+          console.log('[TEST 1] Opening crafting table...');
+          const window = await bot.openBlock(ct_block);
+          console.log(`[TEST 1] Crafting table open. bot.currentWindow is ${bot.currentWindow ? 'active' : 'null'}`);
+          
+          const items = bot.inventory.items();
+          if (items.length === 0) {
+            bot.closeWindow(window);
+            sendResponse(id, false, {}, 'No items in inventory to equip for test');
+            break;
+          }
+          const item = items[0];
+
+          console.log(`[TEST 1] Equipping ${item.name} while window is open...`);
+          await bot.equip(item, 'hand');
+          console.log(`[TEST 1] Held item after equip: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
+
+          await bot.lookAt(ct_block.position.offset(0.5, 3.0, 0.5));
+
+          console.log('[TEST 1] Closing crafting window...');
+          bot.closeWindow(window);
+
+          console.log(`[TEST 1] Held item after window close: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
+          
+          sendResponse(id, true, {
+            held_after_equip: item.name,
+            held_after_close: bot.heldItem ? bot.heldItem.name : 'nothing'
+          });
+        } catch (err) {
+          sendResponse(id, false, {}, err.message);
+        }
+        break;
+      }
+
+      case 'test_case_2': {
+        const { x, y, z } = params;
+        const refBlock = bot.blockAt(new vec3.Vec3(x, y, z));
+        console.log(`[TEST 2] Reference block type: ${refBlock ? refBlock.name : 'null'}`);
+        
+        try {
+          const items = bot.inventory.items();
+          if (items.length === 0) {
+            sendResponse(id, false, {}, 'No items in inventory to place for test');
+            break;
+          }
+          const item = items[0];
+          await bot.equip(item, 'hand');
+
+          console.log(`[TEST 2] Calling bot.placeBlock against ${refBlock ? refBlock.name : 'null'}...`);
+          const placePromise = bot.placeBlock(refBlock, new vec3.Vec3(0, 1, 0));
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000));
+          
+          await Promise.race([placePromise, timeoutPromise]);
+          sendResponse(id, true, { status: 'success' });
+        } catch (err) {
+          console.log(`[TEST 2] bot.placeBlock failed: ${err.message}`);
+          sendResponse(id, true, { status: 'failed', error: err.message });
         }
         break;
       }

@@ -336,6 +336,7 @@ class BaseBot:
             unregister_event(self.bot, "spawn", spawn)
             unregister_event(self.bot, "error", on_error)
             unregister_event(self.bot, "kicked", on_kicked)
+            unregister_event(self.bot, "chat", handle_chat)
 
             if self.reconnect:
                 self.log(chalk.cyanBright("Attempting to reconnect"))

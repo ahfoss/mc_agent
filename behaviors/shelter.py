@@ -277,24 +277,23 @@ def furnish_shelter1(agent: Any) -> None:
         Vec3Class = get_vec3()
         adjacent_table = Vec3Class(math.floor(adjacent_table.x), math.floor(adjacent_table.y), math.floor(adjacent_table.z))
         
-        #torch_offsets = [(1, 2, 2), (7, 2, -2), (1, 2, -5)]
         torch_offsets = [
-            # Block location, standing location, block face to use.
-            ((1, 2, 3), (1, 0, 2), (0, 0, -1)),
-            ((8, 2, -2), (7, 0, -2), (-1, 0, 0)),
-            ((1, 2, -6), (1, 0, -5), (0, 0, 1)),
+            # Block location, block face to use.
+            ((1, 2, 2), (0, 0, -1)),
+            ((7, 2, -2), (-1, 0, 0)),
+            ((1, 2, -5), (0, 0, 1)),
         ]
         #for offset in torch_offsets:
-        for torch_offset, stand_offset, iface in torch_offsets:
+        for torch_offset, iface in torch_offsets:
             torch_abs = adjacent_table + torch_offset
             block = agent.bot.get_block(torch_abs)
             if block is None or "torch" not in block.name:
                 # Stand near the target position on the floor
-                um.move_absolute(agent, adjacent_table + stand_offset)
-                
+                agent.bot.move_to(adjacent_table + (3, 0, -3), range_val = 0)
+                agent.bot.move_to(torch_abs + (0, -2, 0), range_val = 0)
                 if ui.has_item(agent, "torch", 1):
                     agent.bot.chat(f"Placing torch at {torch_abs}...")
-                    agent.bot.place_block("torch", torch_abs, iface)
+                    agent.bot.place_block("torch", torch_abs - iface, Vec3Class(0,0,0) + iface)
                 else:
                     agent.bot.chat("No torches left in inventory to place.")
 

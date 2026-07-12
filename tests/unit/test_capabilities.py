@@ -79,8 +79,8 @@ def test_move_relative_to_self():
     
     um.move_relative_to_self(mock_agent, 1, 0, -2)
     
-    # Target absolute position should be aligned to block center: 11.5, 64, 8.5
-    mock_bot.move_to.assert_called_once_with(MockVec3(11.5, 64, 8.5), range_val=0)
+    # Target absolute position should match relative offsets: 11, 64, 8
+    mock_bot.move_to.assert_called_once_with(MockVec3(11, 64, 8), range_val=0)
 
 
 # ==================== CONSTRUCTION CAPABILITY TESTS ====================
