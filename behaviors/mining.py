@@ -3,21 +3,21 @@ from typing import Any
 from core.memory import get_vec3
 import capabilities.movement as um
 
-def mine_line(agent: Any, length: int) -> None:
+async def mine_line(agent: Any, length: int) -> None:
     """
     Digs a straight line of given length, moving relative to current position.
     """
     Vec3Class = get_vec3()
     pos = agent.bot.position
     start_pos = Vec3Class(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z))
-    agent.bot.dig(start_pos + (0, -1, 0))
+    await agent.bot.dig(start_pos + (0, -1, 0))
     for i in range(length):
         target_ref = start_pos + (i, 0, 0)
-        agent.bot.dig(target_ref + (1, 0, 0))
-        um.move_absolute(agent, target_ref + (1.5, 0.0, 0.5))
+        await agent.bot.dig(target_ref + (1, 0, 0))
+        await um.move_absolute(agent, target_ref + (1.5, 0.0, 0.5))
 
 
-def burrow_one_block_down_positive_x(agent: Any) -> None:
+async def burrow_one_block_down_positive_x(agent: Any) -> None:
     """
     Digs blocks in positive x and moves down by one block.
     """
@@ -27,19 +27,19 @@ def burrow_one_block_down_positive_x(agent: Any) -> None:
     agent.log(f"Burrow start. Bot position: {pos}, Floored: {start_pos}")
 
     agent.log(f"Digging upper block: {start_pos + (1, 1, 0)}")
-    agent.bot.dig(start_pos + (1, 1, 0))
+    await agent.bot.dig(start_pos + (1, 1, 0))
     
     agent.log(f"Digging middle block: {start_pos + (1, 0, 0)}")
-    agent.bot.dig(start_pos + (1, 0, 0))
+    await agent.bot.dig(start_pos + (1, 0, 0))
     
     agent.log(f"Digging lower block: {start_pos + (1, -1, 0)}")
-    agent.bot.dig(start_pos + (1, -1, 0))
+    await agent.bot.dig(start_pos + (1, -1, 0))
     
     agent.log(f"Moving to step center: {start_pos + (1.5, -1.0, 0.5)}")
-    um.move_absolute(agent, start_pos + (1.5, -1.0, 0.5))
+    await um.move_absolute(agent, start_pos + (1.5, -1.0, 0.5))
 
 
-def tunnel_forward(agent: Any, length: int, height: int = 2, direction: str = 'x', direction_sign: int = 1) -> None:
+async def tunnel_forward(agent: Any, length: int, height: int = 2, direction: str = 'x', direction_sign: int = 1) -> None:
     """
     Digs out a tunnel of specified dimensions.
     """
@@ -64,14 +64,14 @@ def tunnel_forward(agent: Any, length: int, height: int = 2, direction: str = 'x
         tx = start_pos.x + i * xcoord
         tz = start_pos.z + i * zcoord
         
-        agent.bot.dig(Vec3Class(tx + xcoord, start_pos.y, tz + zcoord))
-        agent.bot.dig(Vec3Class(tx + xcoord, start_pos.y + 1, tz + zcoord))
+        await agent.bot.dig(Vec3Class(tx + xcoord, start_pos.y, tz + zcoord))
+        await agent.bot.dig(Vec3Class(tx + xcoord, start_pos.y + 1, tz + zcoord))
         if height == 3:
-            agent.bot.dig(Vec3Class(tx + xcoord, start_pos.y + 2, tz + zcoord))
-        um.move_absolute(agent, Vec3Class(tx + xcoord + 0.5, start_pos.y, tz + zcoord + 0.5))
+            await agent.bot.dig(Vec3Class(tx + xcoord, start_pos.y + 2, tz + zcoord))
+        await um.move_absolute(agent, Vec3Class(tx + xcoord + 0.5, start_pos.y, tz + zcoord + 0.5))
 
 
-def dig_chamber(agent: Any, xdim: int, zdim: int) -> None:
+async def dig_chamber(agent: Any, xdim: int, zdim: int) -> None:
     """
     Digs out a 3D rectangular chamber of size xdim by zdim (with height 3).
     """
@@ -81,23 +81,24 @@ def dig_chamber(agent: Any, xdim: int, zdim: int) -> None:
     start_pos = Vec3Class(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z))
 
     # Dig starting column
-    agent.bot.dig(start_pos + (1, 0, 0))
-    agent.bot.dig(start_pos + (1, 1, 0))
-    agent.bot.dig(start_pos + (1, 2, 0))
-    um.move_relative_to_self(agent, 1, 0, 0)
+    await agent.bot.dig(start_pos + (1, 0, 0))
+    await agent.bot.dig(start_pos + (1, 1, 0))
+    await agent.bot.dig(start_pos + (1, 2, 0))
+    await um.move_relative_to_self(agent, 1, 0, 0)
     for z in range(zdim):
-        tunnel_forward(agent, xdim - 1, height=3, direction='x', direction_sign=1)
+        await tunnel_forward(agent, xdim - 1, height=3, direction='x', direction_sign=1)
         if z == zdim - 1:
             return
-        um.move_relative_to_self(agent, 1 - xdim, 0, 0)
-        agent.bot.dig(start_pos + (1, 0, z + 1))
-        agent.bot.dig(start_pos + (1, 1, z + 1))
-        agent.bot.dig(start_pos + (1, 2, z + 1))
-        um.move_relative_to_self(agent, 0, 0, 1)
+        await um.move_relative_to_self(agent, 1 - xdim, 0, 0)
+        await agent.bot.dig(start_pos + (1, 0, z + 1))
+        await agent.bot.dig(start_pos + (1, 1, z + 1))
+        await agent.bot.dig(start_pos + (1, 2, z + 1))
+        await um.move_relative_to_self(agent, 0, 0, 1)
 
-def dig_staircase_down(agent: Any, depth: int) -> None:
+
+async def dig_staircase_down(agent: Any, depth: int) -> None:
     """
     Digs a staircase down for depth levels.
     """
     for _ in range(depth):
-        burrow_one_block_down_positive_x(agent)
+        await burrow_one_block_down_positive_x(agent)

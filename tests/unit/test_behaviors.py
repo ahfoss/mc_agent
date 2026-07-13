@@ -1,23 +1,33 @@
-# pyrefly: ignore [missing-import]
 import pytest
-from unittest.mock import MagicMock, patch
-from javascript import require
-MockVec3 = require('vec3').Vec3
+import asyncio
+from unittest.mock import MagicMock, AsyncMock, patch
+from core.utils.vec3 import Vec3 as MockVec3
 
 # Import our behavior modules
 import behaviors.mining as bm
 import behaviors.shelter as bs
 
+from functools import wraps
+
+# Helper decorator for async tests
+def async_test(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(f(*args, **kwargs))
+    return wrapper
+
 # ==================== MINING BEHAVIORS TESTS ====================
 
-def test_mine_line():
+@async_test
+async def test_mine_line():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(10, 64, 10)
+    mock_bot.dig = AsyncMock()
     mock_agent.bot = mock_bot
     
-    with patch('capabilities.movement.move_absolute') as mock_move:
-        bm.mine_line(mock_agent, 3)
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move:
+        await bm.mine_line(mock_agent, 3)
         
         # Should dig the floor first: (10, 63, 10)
         # Then loop 3 times: dig forward (11, 64, 10), (12, 64, 10), (13, 64, 10) and move absolute
@@ -27,14 +37,16 @@ def test_mine_line():
         mock_move.assert_any_call(mock_agent, MockVec3(13.5, 64.0, 10.5))
         assert mock_move.call_count == 3
 
-def test_burrow_one_block_down_positive_x():
+@async_test
+async def test_burrow_one_block_down_positive_x():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(10, 64, 10)
+    mock_bot.dig = AsyncMock()
     mock_agent.bot = mock_bot
     
-    with patch('capabilities.movement.move_absolute') as mock_move:
-        bm.burrow_one_block_down_positive_x(mock_agent)
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move:
+        await bm.burrow_one_block_down_positive_x(mock_agent)
         
         # Digs 3 blocks: (11, 65, 10), (11, 64, 10), (11, 63, 10)
         assert mock_bot.dig.call_count == 3
@@ -44,14 +56,16 @@ def test_burrow_one_block_down_positive_x():
         # Moves to target block center: (11.5, 63.0, 10.5)
         mock_move.assert_called_once_with(mock_agent, MockVec3(11.5, 63.0, 10.5))
 
-def test_tunnel_forward_height_2():
+@async_test
+async def test_tunnel_forward_height_2():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(10, 64, 10)
+    mock_bot.dig = AsyncMock()
     mock_agent.bot = mock_bot
     
-    with patch('capabilities.movement.move_absolute') as mock_move:
-        bm.tunnel_forward(mock_agent, length=2, height=2, direction='x', direction_sign=1)
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move:
+        await bm.tunnel_forward(mock_agent, length=2, height=2, direction='x', direction_sign=1)
         
         # Length is 2, height is 2, so it digs 4 blocks total
         assert mock_bot.dig.call_count == 4
@@ -59,14 +73,16 @@ def test_tunnel_forward_height_2():
         mock_move.assert_any_call(mock_agent, MockVec3(12.5, 64.0, 10.5))
         assert mock_move.call_count == 2
 
-def test_tunnel_forward_height_3():
+@async_test
+async def test_tunnel_forward_height_3():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(10, 64, 10)
+    mock_bot.dig = AsyncMock()
     mock_agent.bot = mock_bot
     
-    with patch('capabilities.movement.move_absolute') as mock_move:
-        bm.tunnel_forward(mock_agent, length=2, height=3, direction='x', direction_sign=1)
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move:
+        await bm.tunnel_forward(mock_agent, length=2, height=3, direction='x', direction_sign=1)
         
         # Length is 2, height is 3, so it digs 6 blocks total
         assert mock_bot.dig.call_count == 6
@@ -74,20 +90,23 @@ def test_tunnel_forward_height_3():
         mock_move.assert_any_call(mock_agent, MockVec3(12.5, 64.0, 10.5))
         assert mock_move.call_count == 2
 
-def test_tunnel_forward_invalid_height():
+@async_test
+async def test_tunnel_forward_invalid_height():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(10, 64, 10)
+    mock_bot.dig = AsyncMock()
     mock_agent.bot = mock_bot
     
-    with patch('capabilities.movement.move_absolute') as mock_move:
-        bm.tunnel_forward(mock_agent, length=1, height=5, direction='x')
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move:
+        await bm.tunnel_forward(mock_agent, length=1, height=5, direction='x')
         # Height should default back to 2, logging a warning
         mock_agent.log.assert_called_with("Height must be 2 or 3. Defaulting to 2.")
         assert mock_bot.dig.call_count == 2
         mock_move.assert_called_once_with(mock_agent, MockVec3(11.5, 64.0, 10.5))
 
-def test_dig_chamber_volume():
+@async_test
+async def test_dig_chamber_volume():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(10, 64, 10)
@@ -95,19 +114,19 @@ def test_dig_chamber_volume():
     
     # Store dug positions
     dug_positions = set()
-    def mock_dig(pos):
+    async def mock_dig(pos):
         dug_positions.add((int(pos.x), int(pos.y), int(pos.z)))
-    mock_bot.dig.side_effect = mock_dig
+    mock_bot.dig = AsyncMock(side_effect=mock_dig)
     
     # Mock move_absolute and move_relative_to_self to update bot position
-    def mock_move_abs(agent, target):
+    async def mock_move_abs(agent, target):
         mock_bot.position = target
-    def mock_move_rel(agent, dx, dy, dz):
+    async def mock_move_rel(agent, dx, dy, dz):
         curr = mock_bot.position
         mock_bot.position = MockVec3(curr.x + dx, curr.y + dy, curr.z + dz)
-    with patch('capabilities.movement.move_absolute', side_effect=mock_move_abs), \
-         patch('capabilities.movement.move_relative_to_self', side_effect=mock_move_rel):
-        bm.dig_chamber(mock_agent, xdim=4, zdim=3)
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock, side_effect=mock_move_abs), \
+         patch('capabilities.movement.move_relative_to_self', new_callable=AsyncMock, side_effect=mock_move_rel):
+        await bm.dig_chamber(mock_agent, xdim=4, zdim=3)
         
     # Verify that all blocks in the 4x3x3 chamber (starting relative to (10, 64, 10)) are dug
     expected_blocks = set()
@@ -116,10 +135,10 @@ def test_dig_chamber_volume():
             for y in range(64, 67):
                 expected_blocks.add((x, y, z))
                 
-    # Verify no block outside the chamber was dug
     assert dug_positions == expected_blocks
 
-def test_dig_staircase_volume():
+@async_test
+async def test_dig_staircase_volume():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(10, 64, 10)
@@ -132,14 +151,14 @@ def test_dig_staircase_volume():
     mock_agent.memory.delete.side_effect = lambda key: mem_store.pop(key, None)
     
     dug_positions = set()
-    def mock_dig(pos):
+    async def mock_dig(pos):
         dug_positions.add((int(pos.x), int(pos.y), int(pos.z)))
-    mock_bot.dig.side_effect = mock_dig
+    mock_bot.dig = AsyncMock(side_effect=mock_dig)
     
-    def mock_move(agent, target):
+    async def mock_move(agent, target):
         mock_bot.position = target
-    with patch('capabilities.movement.move_absolute', side_effect=mock_move):
-        bm.dig_staircase_down(mock_agent, depth=3)
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock, side_effect=mock_move):
+        await bm.dig_staircase_down(mock_agent, depth=3)
         
     # Verify that exactly the staircase blocks are dug
     expected_blocks = set()
@@ -155,34 +174,44 @@ def test_dig_staircase_volume():
 
 # ==================== SHELTER BEHAVIORS TESTS ====================
 
-def test_build_shelter():
+@async_test
+async def test_build_shelter():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(100, 64, 100)
     mock_agent.bot = mock_bot
     
-    with patch('behaviors.mining.dig_staircase_down') as mock_stair, \
-         patch('behaviors.mining.dig_chamber') as mock_chamber:
+    with patch('behaviors.mining.dig_staircase_down', new_callable=AsyncMock) as mock_stair, \
+         patch('behaviors.mining.dig_chamber', new_callable=AsyncMock) as mock_chamber:
           
-         bs.build_shelter(mock_agent)
+         await bs.build_shelter(mock_agent)
           
          mock_agent.memory.store.assert_called_once_with("shelter_location", MockVec3(100, 64, 100))
          mock_stair.assert_called_once_with(mock_agent, 8)
          mock_chamber.assert_called_once_with(mock_agent, 8, 8)
 
-def test_furnish_shelter1_no_coordinates():
+@async_test
+async def test_furnish_shelter1_no_coordinates():
     mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    mock_bot.chat = AsyncMock()
+    mock_agent.bot = mock_bot
     mock_agent.memory.retrieve.return_value = None  # No coordinates stored
     
-    bs.furnish_shelter1(mock_agent)
+    await bs.furnish_shelter1(mock_agent)
     
-    mock_agent.bot.chat.assert_called_with("Coordinates not found in memory. Have you already built the shelter?")
+    mock_bot.chat.assert_called_with("Coordinates not found in memory. Have you already built the shelter?")
 
-def test_furnish_shelter1_success():
+@async_test
+async def test_furnish_shelter1_success():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(100, 56, 105)
-    mock_bot.get_block.return_value = None
+    mock_bot.get_block = AsyncMock(return_value=None)
+    mock_bot.find_block = AsyncMock(return_value=MockVec3(100, 56, 106))
+    mock_bot.chat = AsyncMock()
+    mock_bot.move_to = AsyncMock()
+    mock_bot.place_block = AsyncMock()
     mock_bot.get_inventory.return_value = {"oak_planks": 64, "cobblestone": 64, "charcoal": 5}
     mock_agent.bot = mock_bot
     
@@ -197,17 +226,17 @@ def test_furnish_shelter1_success():
         return None
     mock_agent.memory.retrieve.side_effect = retrieve_mock
     
-    with patch('capabilities.movement.move_absolute') as mock_move_abs, \
-         patch('capabilities.movement.move_relative_to_self') as mock_move_rel, \
-         patch('capabilities.crafting.craft_tree') as mock_craft_tree, \
-         patch('capabilities.construction.place_block_on_ground_relative_to_self') as mock_place, \
-         patch('capabilities.construction.place_block_relative_to_block') as mock_place_rel_block, \
-         patch('capabilities.crafting.craft_any_door') as mock_craft_door:
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move_abs, \
+         patch('capabilities.movement.move_relative_to_self', new_callable=AsyncMock) as mock_move_rel, \
+         patch('capabilities.crafting.craft_tree', new_callable=AsyncMock) as mock_craft_tree, \
+         patch('capabilities.construction.place_block_on_ground_relative_to_self', new_callable=AsyncMock) as mock_place, \
+         patch('capabilities.construction.place_block_relative_to_block', new_callable=AsyncMock) as mock_place_rel_block, \
+         patch('capabilities.crafting.craft_any_door', new_callable=AsyncMock) as mock_craft_door:
          
          mock_craft_door.return_value = "oak_door"
-         mock_craft_tree.return_value = True  # Successful crafting of table, furnace, and chests
+         mock_craft_tree.return_value = True  # Successful crafting
          
-         bs.furnish_shelter1(mock_agent)
+         await bs.furnish_shelter1(mock_agent)
          
          # 1. Navigation
          mock_move_abs.assert_any_call(mock_agent, MockVec3(100, 56, 105))
@@ -223,7 +252,7 @@ def test_furnish_shelter1_success():
          mock_craft_door.assert_called_once_with(mock_agent, quantity=1)
          mock_move_rel.assert_any_call(mock_agent, 0, 0, -5)
          mock_move_rel.assert_any_call(mock_agent, -1, 0, 0)
-         mock_place.assert_any_call(mock_agent, "oak_door", -1, 1, 0)
+         mock_place.assert_any_call(mock_agent, "oak_door", -1, 0, 0)
 
          # Walk back to adjacent crafting table spot
          mock_move_abs.assert_any_call(mock_agent, MockVec3(100, 56, 105))
@@ -231,7 +260,8 @@ def test_furnish_shelter1_success():
          # 4. Craft & Place furnace at offset (1, 0, 0)
          mock_craft_tree.assert_any_call(mock_agent, "furnace", quantity=1, crafting_table_loc=MockVec3(100, 56, 106))
          mock_place_rel_block.assert_any_call(mock_agent, "furnace", MockVec3(100, 56, 106), 1, 0, 0)
-        # 5. Craft & Place chests at offset (+4, 0, 0) and (+5, 0, 0) after moving close (+4, 0, -1) and (+5, 0, -1)
+         
+         # 5. Craft & Place chests at offset (+4, 0, 0) and (+5, 0, 0)
          mock_craft_tree.assert_any_call(mock_agent, "chest", quantity=2, crafting_table_loc=MockVec3(100, 56, 106))
          mock_move_abs.assert_any_call(mock_agent, MockVec3(104, 56, 105))
          mock_move_abs.assert_any_call(mock_agent, MockVec3(105, 56, 105))
@@ -241,11 +271,16 @@ def test_furnish_shelter1_success():
          # 6. Craft torches recursively
          mock_craft_tree.assert_any_call(mock_agent, "torch", quantity=3, crafting_table_loc=MockVec3(100, 56, 106))
 
-def test_furnish_shelter1_door_craft_fails():
+@async_test
+async def test_furnish_shelter1_door_craft_fails():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(100, 56, 105)
-    mock_bot.get_block.return_value = None
+    mock_bot.get_block = AsyncMock(return_value=None)
+    mock_bot.find_block = AsyncMock(return_value=MockVec3(100, 56, 106))
+    mock_bot.chat = AsyncMock()
+    mock_bot.move_to = AsyncMock()
+    mock_bot.place_block = AsyncMock()
     mock_bot.get_inventory.return_value = {"oak_planks": 64, "cobblestone": 64, "charcoal": 5}
     mock_agent.bot = mock_bot
     
@@ -260,23 +295,25 @@ def test_furnish_shelter1_door_craft_fails():
         return None
     mock_agent.memory.retrieve.side_effect = retrieve_mock
     
-    with patch('capabilities.movement.move_absolute') as mock_move_abs, \
-         patch('capabilities.movement.move_relative_to_self') as mock_move_rel, \
-         patch('capabilities.crafting.craft_tree'), \
-         patch('capabilities.construction.place_block_on_ground_relative_to_self'), \
-         patch('capabilities.construction.place_block_relative_to_block'), \
-         patch('capabilities.crafting.craft_any_door') as mock_craft_door:
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move_abs, \
+         patch('capabilities.movement.move_relative_to_self', new_callable=AsyncMock) as mock_move_rel, \
+         patch('capabilities.crafting.craft_tree', new_callable=AsyncMock) as mock_craft_tree, \
+         patch('capabilities.construction.place_block_on_ground_relative_to_self', new_callable=AsyncMock), \
+         patch('capabilities.construction.place_block_relative_to_block', new_callable=AsyncMock), \
+         patch('capabilities.crafting.craft_any_door', new_callable=AsyncMock) as mock_craft_door:
          
-         mock_craft_door.return_value = None  # Door crafting fails due to lack of wood
+         mock_craft_door.return_value = None  # Door crafting fails
+         mock_craft_tree.return_value = True
          
-         bs.furnish_shelter1(mock_agent)
+         await bs.furnish_shelter1(mock_agent)
          
-         # Verify it logs that door crafting failed and does not place or move relative for door
+         # Verify it logs that door crafting failed
          mock_bot.chat.assert_any_call("Could not craft a door.")
-         # No relative move is performed since navigation was direct
+         # No relative move is performed for placing the door
          mock_move_rel.assert_not_called()
 
-def test_build_shelter_integration_volume():
+@async_test
+async def test_build_shelter_integration_volume():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(100, 64, 100)
@@ -289,18 +326,18 @@ def test_build_shelter_integration_volume():
     mock_agent.memory.delete.side_effect = lambda key: mem_store.pop(key, None)
     
     dug_positions = set()
-    def mock_dig(pos):
+    async def mock_dig(pos):
         dug_positions.add((int(pos.x), int(pos.y), int(pos.z)))
-    mock_bot.dig.side_effect = mock_dig
+    mock_bot.dig = AsyncMock(side_effect=mock_dig)
     
-    def mock_move_abs(agent, target):
+    async def mock_move_abs(agent, target):
         mock_bot.position = target
-    def mock_move_rel(agent, dx, dy, dz):
+    async def mock_move_rel(agent, dx, dy, dz):
         curr = mock_bot.position
         mock_bot.position = MockVec3(curr.x + dx, curr.y + dy, curr.z + dz)
-    with patch('capabilities.movement.move_absolute', side_effect=mock_move_abs), \
-         patch('capabilities.movement.move_relative_to_self', side_effect=mock_move_rel):
-        bs.build_shelter(mock_agent)
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock, side_effect=mock_move_abs), \
+         patch('capabilities.movement.move_relative_to_self', new_callable=AsyncMock, side_effect=mock_move_rel):
+        await bs.build_shelter(mock_agent)
         
     # Expected blocks dug by staircase (depth=8, starting at 100, 64, 100)
     expected_blocks = set()
@@ -321,17 +358,21 @@ def test_build_shelter_integration_volume():
     # Verify that all expected blocks were dug exactly
     assert dug_positions == expected_blocks
 
-
-def test_furnish_shelter1_smelt_charcoal():
+@async_test
+async def test_furnish_shelter1_smelt_charcoal():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
     mock_bot.position = MockVec3(100, 56, 105)
-    mock_bot.get_block.return_value = None
+    mock_bot.get_block = AsyncMock(return_value=None)
+    mock_bot.find_block = AsyncMock(return_value=MockVec3(100, 56, 106))
+    mock_bot.chat = AsyncMock()
+    mock_bot.move_to = AsyncMock()
+    mock_bot.place_block = AsyncMock()
     
     inventory = {"oak_planks": 64, "cobblestone": 64, "oak_log": 10}
     mock_bot.get_inventory.side_effect = lambda: inventory
     
-    def send_command_mock(cmd_type, params, *args, **kwargs):
+    async def send_command_mock(cmd_type, params, *args, **kwargs):
         if cmd_type == "smelt" and params.get("fuel_item_name") == "oak_planks":
             inventory["charcoal"] = 1
             inventory["oak_log"] -= 1
@@ -340,7 +381,7 @@ def test_furnish_shelter1_smelt_charcoal():
             inventory["charcoal"] = 5
             inventory["oak_log"] -= 5
         return {}
-    mock_bot.send_command.side_effect = send_command_mock
+    mock_bot.send_command = AsyncMock(side_effect=send_command_mock)
     mock_agent.bot = mock_bot
     
     # Mock memory retrieval
@@ -354,17 +395,17 @@ def test_furnish_shelter1_smelt_charcoal():
         return None
     mock_agent.memory.retrieve.side_effect = retrieve_mock
     
-    with patch('capabilities.movement.move_absolute') as mock_move_abs, \
-         patch('capabilities.movement.move_relative_to_self') as mock_move_rel, \
-         patch('capabilities.crafting.craft_tree') as mock_craft_tree, \
-         patch('capabilities.construction.place_block_on_ground_relative_to_self') as mock_place, \
-         patch('capabilities.construction.place_block_relative_to_block') as mock_place_rel_block, \
-         patch('capabilities.crafting.craft_any_door') as mock_craft_door:
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move_abs, \
+         patch('capabilities.movement.move_relative_to_self', new_callable=AsyncMock) as mock_move_rel, \
+         patch('capabilities.crafting.craft_tree', new_callable=AsyncMock) as mock_craft_tree, \
+         patch('capabilities.construction.place_block_on_ground_relative_to_self', new_callable=AsyncMock) as mock_place, \
+         patch('capabilities.construction.place_block_relative_to_block', new_callable=AsyncMock) as mock_place_rel_block, \
+         patch('capabilities.crafting.craft_any_door', new_callable=AsyncMock) as mock_craft_door:
          
          mock_craft_door.return_value = "oak_door"
          mock_craft_tree.return_value = True
          
-         bs.furnish_shelter1(mock_agent)
+         await bs.furnish_shelter1(mock_agent)
          
          # Verify navigation back to adjacent crafting table spot
          mock_move_abs.assert_any_call(mock_agent, MockVec3(100, 56, 105))

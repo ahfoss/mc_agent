@@ -2,65 +2,59 @@ import sys
 import math
 import os
 import json
-import time
+import asyncio
 import subprocess
-import threading
 from unittest.mock import MagicMock
 from simple_chalk import chalk
-
-
-
-# Module-level variables for test mocking compatibility
-mineflayer = None
-mineflayer_pathfinder = None
-
-# Global state to share registry for require('minecraft-data')
-_current_registry = None
-
 from core.utils.vec3 import Vec3
 from core.utils.block import Block
 from core.utils.events import register_event, unregister_event
 from core.utils.compat import SidecarEntityEmulator, PlayersDict, RegistryItem, RegistryEmulator
-
-# Re-export Vec3 for backward compatibility in imports
-Vec3 = Vec3
-
 from core.memory import Memory
 
-# Require wrapper for unit test patching compatibility
+# Module-level variables for test mocking compatibility
+mineflayer = None
+mineflayer_pathfinder = None
+_current_registry = None
+
 def require(name):
     pass
 
-# BaseBot Class
 class BaseBot:
     """
-    Core BaseBot wrapping Mineflayer connection, basic events, and command routing.
+    Core BaseBot wrapping Mineflayer TCP connection, basic events, and command routing.
     """
     def __init__(self, bot_name, server_host, server_port, registry=None, reconnect=True, can_dig=False, version=None):
         self.can_dig = can_dig
-        self.bot_args = {
-            "host": server_host,
-            "port": server_port,
-            "username": bot_name,
-            "hideErrors": False,
-        }
-        if version:
-            self.bot_args["version"] = version
-        else:
-            is_mock_args = type(bot_name).__name__ in ('MagicMock', 'Mock') or registry is None and server_host == 'localhost'
-            if server_port == 25565 and not is_mock_args:
-                self.bot_args["version"] = "1.16.5"
-
-        self.reconnect = reconnect
         self.bot_name = bot_name
         self.username = bot_name
         self.ready = False
         self.command_registry = registry
+        self.reconnect = reconnect
+        self.version = version or "1.20.4"
+        self.server_host = server_host
+        self.server_port = server_port
+        
+        self.proc = None
+        self.reader = None
+        self.writer = None
+        self.response_futures = {}
+        self.next_req_id = 1
+        
+        # Local state cache updated by events
+        self._position = Vec3(0, 0, 0)
+        self._inventory = {}
+        
+        # Compat emulators
+        self.bot = self
+        self.entity = SidecarEntityEmulator(self)
+        self.players = PlayersDict(self)
+        self.memory = Memory(bot_name)
+        
+        # Support mock listeners in test lifecycle
+        self._listeners = {}
 
-        self._next_cmd_id = 1
-        self._cmd_futures = {}
-        self._cmd_lock = threading.Lock()
-
+        # Mock items/blocks compatibility
         self._id_to_name = {1: "dirt", 2: "oak_planks", 3: "oak_door", 4: "crafting_table"}
         mock_items = {
             "dirt": RegistryItem("dirt", 1),
@@ -71,25 +65,64 @@ class BaseBot:
         self._items_by_name = mock_items
         self._blocks_by_name = mock_items
 
-        try:
-            self.start_bot()
-        except Exception as e:
-            raise ConnectionError(f"Failed to start bot '{self.bot_name}'. Is the server running?") from e
+        # If mock mineflayer is present, register mock behaviors
+        is_mock_mf = globals().get('mineflayer') is not None
+        if is_mock_mf:
+            mf = globals().get('mineflayer')
+            self.bot = mf.createBot({
+                "host": server_host,
+                "port": server_port,
+                "username": bot_name,
+                "hideErrors": False
+            })
+            if not getattr(self.bot, 'version', None):
+                raise ConnectionError(
+                    f"Bot '{self.bot_name}' failed to retrieve the Minecraft version. "
+                    "Is the server running?"
+                )
+            pf = globals().get('mineflayer_pathfinder')
+            if pf:
+                self.bot.loadPlugin(pf.pathfinder)
+            self._listeners = getattr(self.bot, '_listeners', {})
+            # Bind events on the mock bot to emit on self
+            self.bot.chat = MagicMock()
 
-        is_mock = type(bot_name).__name__ in ('MagicMock', 'Mock')
-        wait_timeout = 0.0 if is_mock else 15.0
+        # Register default event handlers
+        def handle_chat(username, message):
+            if username == self.username:
+                return
+            self.log(f"Chat received from {username}: '{message}'")
+            if self.command_registry:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.command_registry.dispatch(self, username, message))
+                except RuntimeError:
+                    asyncio.run(self.command_registry.dispatch(self, username, message))
 
-        start_wait = time.time()
-        while (not hasattr(self.bot, 'version') or not self.bot.version) and (time.time() - start_wait) < wait_timeout:
-            time.sleep(0.05)
+        self.on("chat", handle_chat)
 
-        if not hasattr(self.bot, 'version') or not self.bot.version:
-            raise ConnectionError(
-                f"Bot '{self.bot_name}' failed to retrieve the Minecraft version. "
-                "Is the server running?"
-            )
+    def on(self, event, listener):
+        if event not in self._listeners:
+            self._listeners[event] = []
+        self._listeners[event].append(listener)
 
-        self.memory = Memory(bot_name)
+    def once(self, event, listener):
+        def wrapper(*args, **kwargs):
+            self.off(event, wrapper)
+            listener(*args, **kwargs)
+        self.on(event, wrapper)
+
+    def off(self, event, listener):
+        if event in self._listeners and listener in self._listeners[event]:
+            self._listeners[event].remove(listener)
+
+    def emit(self, event, *args, **kwargs):
+        listeners = self._listeners.get(event, [])
+        for listener in list(listeners):
+            try:
+                listener(*args, **kwargs)
+            except Exception as e:
+                self.log(f"Error in event listener {event}: {e}")
 
     def log(self, message):
         try:
@@ -102,22 +135,13 @@ class BaseBot:
         except Exception:
             pass
 
-    def start_bot(self):
+    async def start(self):
         is_mock_mf = globals().get('mineflayer') is not None
-        
         if is_mock_mf:
-            mf = globals().get('mineflayer')
-            self.bot = mf.createBot(self.bot_args)
-            self.start_events()
-            pf = globals().get('mineflayer_pathfinder')
-            if pf:
-                self.bot.loadPlugin(pf.pathfinder)
+            self.ready = True
+            self.emit("login")
+            self.emit("spawn")
             return
-
-        self.bot = self
-        self.entity = SidecarEntityEmulator(self)
-        self.players = PlayersDict(self)
-        self.start_events()
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         driver_path = os.path.join(current_dir, "..", "sidecar", "driver.js")
@@ -130,16 +154,15 @@ class BaseBot:
         cmd = [
             node_bin,
             driver_path,
-            self.bot_args["host"],
-            str(self.bot_args["port"]),
-            self.bot_args["username"],
-            self.bot_args.get("version", "1.16.5")
+            self.server_host,
+            str(self.server_port),
+            self.bot_name,
+            self.version
         ]
 
         env = os.environ.copy()
         try:
             import importlib.util
-            # Temporarily pop javascript mock to allow find_spec to search on disk
             real_js = sys.modules.pop("javascript", None)
             spec = importlib.util.find_spec("javascript")
             if real_js is not None:
@@ -153,251 +176,187 @@ class BaseBot:
         except Exception:
             pass
 
+        self.log(f"Starting Node.js sidecar TCP driver: {cmd}")
+        self.proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env
+        )
+
+        # Read stdout until we find PORT=...
+        port = None
+        while True:
+            line_bytes = await self.proc.stdout.readline()
+            if not line_bytes:
+                break
+            line = line_bytes.decode('utf-8').strip()
+            if line.startswith("PORT="):
+                port = int(line.split("=")[1])
+                break
+            else:
+                self.log(f"[Sidecar Startup] {line}")
+
+        if port is None:
+            raise ConnectionError("Failed to retrieve port from JS sidecar startup.")
+
+        self.log(f"Sidecar listening on port {port}. Connecting...")
+        self.reader, self.writer = await asyncio.open_connection('127.0.0.1', port)
+        self.log("Connected to sidecar TCP server!")
+
+        # Start background listener tasks
+        self.listen_task = asyncio.create_task(self._listen_loop())
+        self.stdout_task = asyncio.create_task(self._read_stdout_loop())
+        self.stderr_task = asyncio.create_task(self._read_stderr_loop())
+
+        # Trigger login/spawn sequence emulations
+        self.emit("login")
+        self.emit("spawn")
+
+    async def _listen_loop(self):
         try:
-            self.proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                env=env
-            )
-        except Exception as e:
-            raise ConnectionError(f"Failed to start JS sidecar: {e}")
-
-        self.stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
-        self.stdout_thread.start()
-        self.stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
-        self.stderr_thread.start()
-
-    def _read_stdout(self):
-        for line in iter(self.proc.stdout.readline, ''):
-            if not line:
-                break
-            if os.environ.get("DEBUG_IO") == "1":
-                self.log(f"[DEBUG IPC] Read line: {line.strip()}")
-            try:
-                msg = json.loads(line)
-            except Exception:
-                self.log(f"[Sidecar Log] {line.strip()}")
-                continue
-
-            msg_type = msg.get("type")
-            if msg_type == "event":
-                self._handle_sidecar_event(msg)
-            elif msg_type == "response":
-                self._handle_sidecar_response(msg)
-
-    def _read_stderr(self):
-        for line in iter(self.proc.stderr.readline, ''):
-            if not line:
-                break
-            self.log(f"[Sidecar Error] {line.strip()}")
-
-    def _handle_sidecar_event(self, msg):
-        event_name = msg.get("event")
-        
-        if event_name == "spawn":
-            self.bot.version = msg.get("version")
-            self.ready = True
-            self._trigger_event("spawn")
-            
-        elif event_name == "chat":
-            username = msg.get("username")
-            message = msg.get("message")
-            self._trigger_event("chat", username, message)
-            
-        elif event_name == "end":
-            reason = msg.get("reason")
-            self._trigger_event("end", reason)
-            
-        elif event_name == "error":
-            error_msg = msg.get("error")
-            self._trigger_event("error", error_msg)
-
-    def _handle_sidecar_response(self, msg):
-        cmd_id = msg.get("id")
-        with self._cmd_lock:
-            future = self._cmd_futures.pop(cmd_id, None)
-        if future:
-            future["response"] = msg
-            future["event"].set()
-
-    def _trigger_event(self, event_name, *args):
-        listeners = getattr(self.bot, '_listeners', {}).get(event_name, [])
-        for cb in list(listeners):
-            def run_cb(callback=cb):
+            while True:
+                line_bytes = await self.reader.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode('utf-8').strip()
+                if not line:
+                    continue
+                
                 try:
-                    callback(*args)
+                    data = json.loads(line)
                 except Exception as e:
-                    self.log(f"Error in event listener {event_name}: {e}")
-            threading.Thread(target=run_cb, daemon=True).start()
+                    self.log(f"Malformed socket payload: {e}")
+                    continue
 
-    def send_command(self, type_name, params=None, timeout=45.0):
-        if not hasattr(self, 'proc') or self.proc.poll() is not None:
+                if "id" in data:
+                    req_id = data["id"]
+                    if req_id in self.response_futures:
+                        self.response_futures[req_id].set_result(data)
+                elif "event" in data:
+                    await self._handle_sidecar_event(data["event"], data.get("params", {}))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            self.log(f"Error in TCP socket listen loop: {e}")
+
+    async def _read_stdout_loop(self):
+        try:
+            while True:
+                line_bytes = await self.proc.stdout.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode('utf-8').strip()
+                self.log(f"[Sidecar Log] {line}")
+        except asyncio.CancelledError:
+            pass
+
+    async def _read_stderr_loop(self):
+        try:
+            while True:
+                line_bytes = await self.proc.stderr.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode('utf-8').strip()
+                self.log(f"[Sidecar Error] {line}")
+        except asyncio.CancelledError:
+            pass
+
+    async def _handle_sidecar_event(self, event_name, params):
+        if event_name == "spawn":
+            self.ready = True
+            self.emit("spawn")
+        elif event_name == "chat":
+            username = params.get("username")
+            message = params.get("message")
+            self.emit("chat", username, message)
+        elif event_name == "position_update":
+            pos = params.get("position", {})
+            self._position = Vec3(pos.get("x", 0), pos.get("y", 0), pos.get("z", 0))
+        elif event_name == "inventory_update":
+            inv_list = params.get("inventory", [])
+            self._inventory = {item["name"]: item["count"] for item in inv_list}
+
+    async def send_command(self, method, params=None, timeout=None):
+        if not self.writer or self.writer.is_closing():
             return {}
 
-        event = threading.Event()
-        future = {"event": event, "response": None}
+        req_id = self.next_req_id
+        self.next_req_id += 1
 
-        with self._cmd_lock:
-            cmd_id = self._next_cmd_id
-            self._next_cmd_id += 1
-            self._cmd_futures[cmd_id] = future
+        future = asyncio.get_running_loop().create_future()
+        self.response_futures[req_id] = future
 
-            cmd = {
-                "id": cmd_id,
-                "type": type_name,
-                "params": params or {}
-            }
+        payload = json.dumps({
+            "id": req_id,
+            "method": method,
+            "params": params or {}
+        }) + "\n"
 
-            if os.environ.get("DEBUG_IO") == "1":
-                self.log(f"[DEBUG IPC] Write: {json.dumps(cmd)}")
+        self.writer.write(payload.encode('utf-8'))
+        await self.writer.drain()
 
+        # Wait for the response
+        if timeout is not None:
             try:
-                self.proc.stdin.write(json.dumps(cmd) + "\n")
-                self.proc.stdin.flush()
-            except Exception as e:
-                self._cmd_futures.pop(cmd_id, None)
-                raise ConnectionError(f"Failed to communicate with sidecar: {e}")
+                res = await asyncio.wait_for(future, timeout=timeout)
+            except asyncio.TimeoutError:
+                del self.response_futures[req_id]
+                raise TimeoutError(f"Command '{method}' timed out after {timeout} seconds.")
+        else:
+            res = await future
 
-        success = event.wait(timeout=timeout)
-        if not success:
-            raise TimeoutError(f"Sidecar command '{type_name}' timed out after {timeout} seconds.")
-
-        res = future["response"]
-        if os.environ.get("DEBUG_IO") == "1":
-            self.log(f"[DEBUG IPC] Command '{type_name}' Response: {res}")
+        del self.response_futures[req_id]
 
         if not res.get("success"):
-            raise RuntimeError(res.get("error") or f"Command '{type_name}' failed in sidecar.")
+            raise RuntimeError(res.get("error") or f"Command '{method}' failed in sidecar.")
 
-        return res.get("data")
-
-    def start_events(self):
-        def on_error(*args):
-            err = args[1] if len(args) > 1 and hasattr(args[0], 'emit') else args[0]
-            self.log(f"CRITICAL ERROR: The bot encountered a problem: {err}")
-        register_event(self.bot, "error", on_error)
-
-        def on_kicked(*args):
-            reason = args[1] if len(args) > 1 and hasattr(args[0], 'emit') else args[0]
-            self.log(f"KICKED: The server rejected the bot. Reason: {reason}")
-        register_event(self.bot, "kicked", on_kicked)
-
-        def on_end(*args):
-            reason = args[1] if len(args) > 1 and hasattr(args[0], 'emit') else args[0]
-            self.log(f"DISCONNECTED: The bot lost connection to the server. Reason: {reason}")
-        register_event(self.bot, "end", on_end)
-
-        def login(*args):
-            self.log(chalk.green("Logged in to server"))
-        register_event(self.bot, "login", login)
-
-        def spawn(*args):
-            self.ready = True
-            self.log("Spawned in the world!")
-            self.bot.chat("Hi buddy!")
-        register_event(self.bot, "spawn", spawn)
-
-        def handle_chat(*args):
-            if len(args) >= 3 and hasattr(args[0], 'emit'):
-                username = args[1]
-                message = args[2]
-            else:
-                username = args[0]
-                message = args[1]
-
-            if username == self.bot.username:
-                return
-
-            self.log(f"Chat received from {username}: '{message}'")
-            
-            if self.command_registry:
-                import threading
-                def safe_dispatch():
-                    try:
-                        self.command_registry.dispatch(self, username, message)
-                    except Exception as e:
-                        import traceback
-                        import sys
-                        self.log(chalk.red(f"CRITICAL ERROR executing command '{message}': {e}"))
-                        traceback.print_exc(file=sys.stderr)
-
-                threading.Thread(target=safe_dispatch, daemon=True).start()
-        register_event(self.bot, "chat", handle_chat)
-
-        def end_listener(*args):
-            reason = args[1] if len(args) > 1 and hasattr(args[0], 'emit') else args[0]
-            self.log(chalk.red(f"Disconnected: {reason}"))
-
-            unregister_event(self.bot, "login", login)
-            unregister_event(self.bot, "spawn", spawn)
-            unregister_event(self.bot, "error", on_error)
-            unregister_event(self.bot, "kicked", on_kicked)
-            unregister_event(self.bot, "chat", handle_chat)
-
-            if self.reconnect:
-                self.log(chalk.cyanBright("Attempting to reconnect"))
-                self.start_bot()
-
-            unregister_event(self.bot, "end", end_listener)
-        register_event(self.bot, "end", end_listener)
-
-        self._event_handlers = [
-            on_error, on_kicked, on_end, login, spawn, handle_chat, end_listener
-        ]
+        return res.get("result", {})
 
     @property
     def position(self):
-        data = self.send_command("get_state")
-        pos = data.get("position")
-        if pos:
-            return Vec3(pos["x"], pos["y"], pos["z"])
-        return Vec3(0, 0, 0)
+        return self._position
 
     def get_inventory(self):
-        data = self.send_command("get_state")
-        inv = data.get("inventory", [])
-        return {item["name"]: item["count"] for item in inv}
+        return self._inventory
 
-    def get_block(self, pos):
+    async def get_block(self, pos):
         x = pos.x if hasattr(pos, "x") else pos.get("x")
         y = pos.y if hasattr(pos, "y") else pos.get("y")
         z = pos.z if hasattr(pos, "z") else pos.get("z")
-        data = self.send_command("block_at", {"x": math.floor(x), "y": math.floor(y), "z": math.floor(z)})
-        block_data = data.get("block")
+        res = await self.send_command("block_at", {"x": math.floor(x), "y": math.floor(y), "z": math.floor(z)})
+        block_data = res.get("block")
         if block_data:
             return Block(block_data["name"], Vec3(block_data["position"]))
         return None
 
-    def find_block(self, block_name, max_distance=6):
-        data = self.send_command("find_block", {
+    async def find_block(self, block_name, max_distance=6):
+        res = await self.send_command("find_block", {
             "matching": block_name,
             "maxDistance": max_distance
         })
-        block_data = data.get("block")
+        block_data = res.get("block")
         if block_data:
             pos = block_data["position"]
             return Vec3(pos["x"], pos["y"], pos["z"])
         return None
 
-    def find_player(self, username):
-        data = self.send_command("get_player", {"username": username})
-        player_data = data.get("player")
+    async def find_player(self, username):
+        res = await self.send_command("get_player", {"username": username})
+        player_data = res.get("player")
         if player_data and player_data.get("entity"):
             pos = player_data["entity"].get("position", {})
             return Vec3(pos.get("x", 0), pos.get("y", 0), pos.get("z", 0))
         return None
 
-    def move_to(self, target, range_val=1, can_dig=None):
+    async def move_to(self, target, range_val=1, can_dig=None):
         if can_dig is None:
             can_dig = self.can_dig
         x = target.x if hasattr(target, "x") else target.get("x")
         y = target.y if hasattr(target, "y") else target.get("y")
         z = target.z if hasattr(target, "z") else target.get("z")
-        self.send_command("pathfind", {
+        await self.send_command("pathfind", {
             "x": float(x),
             "y": float(y),
             "z": float(z),
@@ -406,7 +365,7 @@ class BaseBot:
         })
         return True
 
-    def dig(self, pos_or_block):
+    async def dig(self, pos_or_block):
         if pos_or_block is None:
             return False
         if isinstance(pos_or_block, dict):
@@ -420,14 +379,14 @@ class BaseBot:
         target_y = pos["y"] if isinstance(pos, dict) else getattr(pos, "y")
         target_z = pos["z"] if isinstance(pos, dict) else getattr(pos, "z")
         
-        self.send_command("dig", {
+        await self.send_command("dig", {
             "x": math.floor(target_x),
             "y": math.floor(target_y),
             "z": math.floor(target_z)
         })
         return True
 
-    def place_block(self, item_name, ref_pos, face):
+    async def place_block(self, item_name, ref_pos, face):
         x = ref_pos.x if hasattr(ref_pos, "x") else ref_pos.get("x")
         y = ref_pos.y if hasattr(ref_pos, "y") else ref_pos.get("y")
         z = ref_pos.z if hasattr(ref_pos, "z") else ref_pos.get("z")
@@ -436,7 +395,7 @@ class BaseBot:
         face_y = face.y if hasattr(face, "y") else face.get("y")
         face_z = face.z if hasattr(face, "z") else face.get("z")
         
-        self.send_command("place", {
+        await self.send_command("place", {
             "item_name": item_name,
             "x": math.floor(x),
             "y": math.floor(y),
@@ -447,14 +406,14 @@ class BaseBot:
         })
         return True
 
-    def equip(self, item_name, slot="hand"):
-        self.send_command("equip", {
+    async def equip(self, item_name, slot="hand"):
+        await self.send_command("equip", {
             "item_name": item_name,
             "destination": slot
         })
         return True
 
-    def craft(self, item_name, quantity=1, table_pos=None):
+    async def craft(self, item_name, quantity=1, table_pos=None):
         table_pos_dict = None
         if table_pos:
             table_pos_dict = {
@@ -462,29 +421,34 @@ class BaseBot:
                 "y": math.floor(table_pos.y if hasattr(table_pos, "y") else table_pos.get("y")),
                 "z": math.floor(table_pos.z if hasattr(table_pos, "z") else table_pos.get("z"))
             }
-        self.send_command("craft", {
+        await self.send_command("craft", {
             "item_name": item_name,
             "quantity": quantity,
             "crafting_table_pos": table_pos_dict
         })
         return True
 
-    def chat(self, message):
-        self.send_command("chat", {"message": message})
+    async def chat(self, message):
+        await self.send_command("chat", {"message": message})
 
-    def emit(self, event, *args):
-        self._trigger_event(event, *args)
-
-    def quit(self):
-        self.close()
-
-    def __del__(self):
-        self.close()
-
-    def close(self):
-        if hasattr(self, 'proc'):
+    async def close(self):
+        if hasattr(self, 'listen_task'):
+            self.listen_task.cancel()
+        if hasattr(self, 'stdout_task'):
+            self.stdout_task.cancel()
+        if hasattr(self, 'stderr_task'):
+            self.stderr_task.cancel()
+            
+        if self.writer:
+            self.writer.close()
+            try:
+                await self.writer.wait_closed()
+            except Exception:
+                pass
+                
+        if self.proc:
             try:
                 self.proc.terminate()
-                self.proc.wait(timeout=1.0)
+                await self.proc.wait()
             except Exception:
                 pass

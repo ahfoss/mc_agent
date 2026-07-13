@@ -56,23 +56,23 @@ RECIPES: Dict[str, Tuple[int, List[List[Tuple[str, int]]]]] = {
 }
 
 
-def craft_direct(agent: Any, item_name: str, quantity: int = 1, crafting_table_loc: Any = None) -> bool:
+async def craft_direct(agent: Any, item_name: str, quantity: int = 1, crafting_table_loc: Any = None) -> bool:
     """
     Craft an item directly if the ingredients are present.
     """
     try:
-        success = agent.bot.craft(item_name, quantity, crafting_table_loc)
+        success = await agent.bot.craft(item_name, quantity, crafting_table_loc)
         if not success:
             display_name = item_name.replace("_", " ")
-            agent.bot.chat(f"No recipe found for {display_name}.")
+            await agent.bot.chat(f"No recipe found for {display_name}.")
             return False
         return True
     except Exception as e:
-        agent.bot.chat(f"Craft failed: {e}")
+        await agent.bot.chat(f"Craft failed: {e}")
         return False
 
 
-def craft_tree(agent: Any, item_name: str, quantity: int = 1, crafting_table_loc: Any = None) -> bool:
+async def craft_tree(agent: Any, item_name: str, quantity: int = 1, crafting_table_loc: Any = None) -> bool:
     """
     Crafts an item, recursively crafting prerequisite ingredients if necessary.
     """
@@ -99,18 +99,18 @@ def craft_tree(agent: Any, item_name: str, quantity: int = 1, crafting_table_loc
         for ing_name, ing_qty in option:
             total_ing_needed = ing_qty * crafts_needed
             # Recursively ensure we have the required ingredients
-            if not craft_tree(agent, ing_name, total_ing_needed, crafting_table_loc):
+            if not await craft_tree(agent, ing_name, total_ing_needed, crafting_table_loc):
                 can_craft_option = False
                 break
         
         if can_craft_option:
             # We successfully satisfied all prerequisite ingredients! Craft it.
-            return craft_direct(agent, item_name, crafts_needed, crafting_table_loc)
+            return await craft_direct(agent, item_name, crafts_needed, crafting_table_loc)
 
     return False
 
 
-def craft_any_door(agent: Any, quantity: int = 1) -> Optional[str]:
+async def craft_any_door(agent: Any, quantity: int = 1) -> Optional[str]:
     """
     Finds a nearby crafting table, walks to it, and attempts to craft any door type.
     """
@@ -119,7 +119,7 @@ def craft_any_door(agent: Any, quantity: int = 1) -> Optional[str]:
         print("Crafting failed: No crafting area location stored in memory.")
         return None
 
-    um.move_absolute(agent, crafting_table_loc)
+    await um.move_absolute(agent, crafting_table_loc)
 
     # Locate crafting table block using memory first, falling back to block search
     crafting_table_pos = agent.memory.retrieve("crafting_table_position")
@@ -127,7 +127,7 @@ def craft_any_door(agent: Any, quantity: int = 1) -> Optional[str]:
         Vec3Class = get_vec3()
         crafting_table_pos = Vec3Class(math.floor(crafting_table_pos.x), math.floor(crafting_table_pos.y), math.floor(crafting_table_pos.z))
     else:
-        crafting_table_pos = agent.bot.find_block("crafting_table", max_distance=5)
+        crafting_table_pos = await agent.bot.find_block("crafting_table", max_distance=5)
 
     if not crafting_table_pos:
         print("Crafting failed: I cannot find a crafting table nearby.")
@@ -140,7 +140,7 @@ def craft_any_door(agent: Any, quantity: int = 1) -> Optional[str]:
 
     for door_name in door_types:
         print(f"Found materials for a {door_name}. Attempting to craft...")
-        if craft_tree(agent, door_name, quantity, crafting_table_pos):
+        if await craft_tree(agent, door_name, quantity, crafting_table_pos):
             print(f"Success! Crafted {quantity} {door_name}(s).")
             return door_name
 

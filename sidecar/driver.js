@@ -1,9 +1,9 @@
+const net = require('net');
 const mineflayer = require('mineflayer');
 const pathfinder = require('mineflayer-pathfinder').pathfinder;
 const Movements = require('mineflayer-pathfinder').Movements;
 const goals = require('mineflayer-pathfinder').goals;
 const vec3 = require('vec3');
-const readline = require('readline');
 
 // Parse command line arguments
 const host = process.argv[2] || 'localhost';
@@ -21,58 +21,106 @@ const bot = mineflayer.createBot({
 
 bot.loadPlugin(pathfinder);
 
-// Standard Input reader for commands from Python
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  terminal: false
-});
+let clientSocket = null;
 
-// Helper function to send JSON events to Python
+// Helper to send event notification to Python
 function sendEvent(type, data = {}) {
-  console.log(JSON.stringify({ type: 'event', event: type, ...data }));
+  if (clientSocket && !clientSocket.destroyed) {
+    try {
+      clientSocket.write(JSON.stringify({ event: type, params: data }) + '\n');
+    } catch (err) {
+      console.error('[Sidecar TCP Event Error]', err.message);
+    }
+  }
 }
 
-// Helper function to send command responses
-function sendResponse(id, success, data = {}, error = null) {
-  console.log(JSON.stringify({ type: 'response', id, success, data, error }));
+// Helper to send response to Python
+function sendResponse(id, success, result = {}, error = null) {
+  if (clientSocket && !clientSocket.destroyed) {
+    try {
+      clientSocket.write(JSON.stringify({ id, success, result, error }) + '\n');
+    } catch (err) {
+      console.error('[Sidecar TCP Response Error]', err.message);
+    }
+  }
 }
 
-// Bot lifecycle events
+// Bot listeners
 bot.once('spawn', () => {
-  sendEvent('spawn', {
-    version: bot.version
-  });
+  sendEvent('spawn', { version: bot.version });
+  // Send initial state update
+  triggerStateUpdates();
 });
 
 bot.on('chat', (username, message) => {
   sendEvent('chat', { username, message });
 });
 
-bot.on('end', (reason) => {
-  sendEvent('end', { reason });
-  process.exit(0);
-});
-
-bot.on('error', (err) => {
-  sendEvent('error', { error: err.message });
-});
-
-// Process incoming JSON commands from Python
-rl.on('line', async (line) => {
-  if (!line.trim()) return;
-  let cmd;
-  try {
-    cmd = JSON.parse(line);
-  } catch (err) {
-    sendEvent('error', { error: 'Malformed JSON command: ' + err.message });
-    return;
+bot.on('move', () => {
+  if (bot.entity) {
+    const pos = bot.entity.position;
+    sendEvent('position_update', { position: { x: pos.x, y: pos.y, z: pos.z } });
   }
+});
 
-  const { id, type, params } = cmd;
+// Helper to poll or trigger state updates
+function triggerStateUpdates() {
+  if (bot.inventory) {
+    const inv = bot.inventory.items().map(item => ({
+      name: item.name,
+      count: item.count,
+      type: item.type
+    }));
+    sendEvent('inventory_update', { inventory: inv });
+  }
+}
 
+// Monitor inventory updates
+bot.on('playerCollect', () => triggerStateUpdates());
+bot.on('chestLooted', () => triggerStateUpdates());
+
+// Create TCP Server for IPC communication with Python
+const server = net.createServer((socket) => {
+  console.log('[Sidecar TCP] Python client connected.');
+  clientSocket = socket;
+
+  // Send state updates on connect
+  triggerStateUpdates();
+
+  let buffer = '';
+  socket.on('data', async (chunk) => {
+    buffer += chunk.toString('utf-8');
+    let boundary = buffer.indexOf('\n');
+    while (boundary !== -1) {
+      const line = buffer.substring(0, boundary).trim();
+      buffer = buffer.substring(boundary + 1);
+      boundary = buffer.indexOf('\n');
+
+      if (!line) continue;
+      try {
+        const cmd = JSON.parse(line);
+        const { id, method, params } = cmd;
+        await handleCommand(id, method, params);
+      } catch (err) {
+        console.error('[Sidecar TCP Error] Error handling payload line:', err.message);
+      }
+    }
+  });
+
+  socket.on('close', () => {
+    console.log('[Sidecar TCP] Python client disconnected.');
+    clientSocket = null;
+  });
+
+  socket.on('error', (err) => {
+    console.error('[Sidecar TCP Error] Socket error:', err.message);
+  });
+});
+
+// Command dispatch handler
+async function handleCommand(id, method, params) {
   try {
-    switch (type) {
+    switch (method) {
       case 'get_state': {
         const pos = bot.entity ? bot.entity.position : null;
         const inv = bot.inventory ? bot.inventory.items().map(item => ({
@@ -140,8 +188,22 @@ rl.on('line', async (line) => {
 
       case 'find_block': {
         const { matching, maxDistance } = params;
+        let match;
+        const mcData = require('minecraft-data')(bot.version);
+        if (isNaN(matching)) {
+          const blockInfo = mcData.blocksByName[matching];
+          if (blockInfo) {
+            match = blockInfo.id;
+          } else {
+            sendResponse(id, true, { block: null });
+            break;
+          }
+        } else {
+          match = parseInt(matching);
+        }
+
         const block = bot.findBlock({
-          matching: parseInt(matching),
+          matching: match,
           maxDistance: parseInt(maxDistance) || 5
         });
         if (block) {
@@ -164,6 +226,7 @@ rl.on('line', async (line) => {
         const defaultMovements = new Movements(bot);
         defaultMovements.canDig = can_dig !== undefined ? can_dig : false;
         defaultMovements.canOpenDoors = true;
+        defaultMovements.allow1by1tunnels = true;
         bot.pathfinder.setMovements(defaultMovements);
 
         let goal;
@@ -175,6 +238,7 @@ rl.on('line', async (line) => {
 
         try {
           await bot.pathfinder.goto(goal);
+          triggerStateUpdates();
           sendResponse(id, true);
         } catch (err) {
           sendResponse(id, false, {}, err.message);
@@ -185,20 +249,15 @@ rl.on('line', async (line) => {
       case 'dig': {
         const { x, y, z } = params;
         const block = bot.blockAt(new vec3.Vec3(x, y, z));
-        console.log(`[DEBUG SIDECAR dig] Bot position: ${bot.entity.position.toString()}`);
-        console.log(`[DEBUG SIDECAR dig] Target block coordinates: ${x}, ${y}, ${z}`);
         if (!block) {
-          console.log(`[DEBUG SIDECAR dig] Block not found at ${x}, ${y}, ${z}`);
           sendResponse(id, false, {}, 'Block not found');
           break;
         }
-        console.log(`[DEBUG SIDECAR dig] Found block: ${block.name} (type: ${block.type})`);
         try {
           await bot.dig(block);
-          console.log(`[DEBUG SIDECAR dig] Digging successful for block: ${block.name}`);
+          triggerStateUpdates();
           sendResponse(id, true);
         } catch (err) {
-          console.error(`[DEBUG SIDECAR dig] Digging failed for block ${block.name}: ${err.message}`);
           sendResponse(id, false, {}, err.message);
         }
         break;
@@ -210,23 +269,19 @@ rl.on('line', async (line) => {
         const item_id = mcData.itemsByName[item_name].id;
         const item = bot.inventory.findInventoryItem(item_id, null);
         if (!item) {
-          console.error(`[DEBUG PLACE ERROR] Item ${item_name} not found in inventory`);
           sendResponse(id, false, {}, `Item ${item_name} not found in inventory`);
           break;
         }
 
         if (bot.currentWindow) {
-          console.log('[DEBUG PLACE] Closing active window before equip...');
           bot.closeWindow(bot.currentWindow);
+          await new Promise(r => setTimeout(r, 100));
         }
 
-        console.log(`[DEBUG PLACE] Equipping ${item_name}...`);
         await bot.equip(item, 'hand');
-        console.log(`[DEBUG PLACE] Held item after equip: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
 
         const refBlock = bot.blockAt(new vec3.Vec3(x, y, z));
         if (!refBlock) {
-          console.error(`[DEBUG PLACE ERROR] Reference block not found at (${x}, ${y}, ${z})`);
           sendResponse(id, false, {}, 'Reference block not found');
           break;
         }
@@ -236,17 +291,7 @@ rl.on('line', async (line) => {
           y_offset !== undefined ? y_offset : 1,
           z_offset !== undefined ? z_offset : 0
         );
-        const targetPos = refBlock.position.plus(faceVec);
-        const targetBlock = bot.blockAt(targetPos);
-        const targetAboveBlock = bot.blockAt(targetPos.offset(0, 1, 0));
 
-        console.log(`[DEBUG PLACE] Reference block: ${refBlock.name} (type: ${refBlock.type}) at ${refBlock.position.toString()}`);
-        console.log(`[DEBUG PLACE] Face vector: ${faceVec.toString()}`);
-        console.log(`[DEBUG PLACE] Target position: ${targetPos.toString()} is currently ${targetBlock ? targetBlock.name : 'unknown'}`);
-        console.log(`[DEBUG PLACE] Target above position: ${targetPos.offset(0, 1, 0).toString()} is currently ${targetAboveBlock ? targetAboveBlock.name : 'unknown'}`);
-        console.log(`[DEBUG PLACE] Bot position: ${bot.entity.position.toString()}`);
-
-        console.log(`[DEBUG PLACE] Forcing lookAt target block face...`);
         const faceCenter = refBlock.position.offset(
           0.5 + faceVec.x * 0.5,
           0.5 + faceVec.y * 0.5,
@@ -255,12 +300,10 @@ rl.on('line', async (line) => {
         await bot.lookAt(faceCenter);
 
         try {
-          console.log(`[DEBUG PLACE] Calling bot.placeBlock...`);
           await bot.placeBlock(refBlock, faceVec);
-          console.log(`[DEBUG PLACE] bot.placeBlock resolved successfully!`);
+          triggerStateUpdates();
           sendResponse(id, true);
         } catch (err) {
-          console.error(`[DEBUG PLACE ERROR] bot.placeBlock failed: ${err.message}`);
           sendResponse(id, false, {}, err.message);
         }
         break;
@@ -276,11 +319,12 @@ rl.on('line', async (line) => {
           break;
         }
         if (bot.currentWindow) {
-          console.log('[DEBUG EQUIP] Closing active window before equip...');
           bot.closeWindow(bot.currentWindow);
+          await new Promise(r => setTimeout(r, 100));
         }
         const dest = (destination === 'mainHand') ? 'hand' : (destination || 'hand');
         await bot.equip(item, dest);
+        triggerStateUpdates();
         sendResponse(id, true);
         break;
       }
@@ -358,7 +402,12 @@ rl.on('line', async (line) => {
         })();
 
         const result = await Promise.race([inventoryCheck, craftAction]);
+        if (bot.currentWindow) {
+          bot.closeWindow(bot.currentWindow);
+          await new Promise(r => setTimeout(r, 100));
+        }
         if (result.success) {
+          triggerStateUpdates();
           sendResponse(id, true);
         } else {
           sendResponse(id, false, {}, result.error);
@@ -375,10 +424,7 @@ rl.on('line', async (line) => {
         }
 
         try {
-          console.log('[TEST 1] Opening crafting table...');
           const window = await bot.openBlock(ct_block);
-          console.log(`[TEST 1] Crafting table open. bot.currentWindow is ${bot.currentWindow ? 'active' : 'null'}`);
-          
           const items = bot.inventory.items();
           if (items.length === 0) {
             bot.closeWindow(window);
@@ -387,17 +433,10 @@ rl.on('line', async (line) => {
           }
           const item = items[0];
 
-          console.log(`[TEST 1] Equipping ${item.name} while window is open...`);
           await bot.equip(item, 'hand');
-          console.log(`[TEST 1] Held item after equip: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
-
           await bot.lookAt(ct_block.position.offset(0.5, 3.0, 0.5));
-
-          console.log('[TEST 1] Closing crafting window...');
           bot.closeWindow(window);
 
-          console.log(`[TEST 1] Held item after window close: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
-          
           sendResponse(id, true, {
             held_after_equip: item.name,
             held_after_close: bot.heldItem ? bot.heldItem.name : 'nothing'
@@ -411,7 +450,6 @@ rl.on('line', async (line) => {
       case 'test_case_2': {
         const { x, y, z } = params;
         const refBlock = bot.blockAt(new vec3.Vec3(x, y, z));
-        console.log(`[TEST 2] Reference block type: ${refBlock ? refBlock.name : 'null'}`);
         
         try {
           const items = bot.inventory.items();
@@ -422,14 +460,13 @@ rl.on('line', async (line) => {
           const item = items[0];
           await bot.equip(item, 'hand');
 
-          console.log(`[TEST 2] Calling bot.placeBlock against ${refBlock ? refBlock.name : 'null'}...`);
           const placePromise = bot.placeBlock(refBlock, new vec3.Vec3(0, 1, 0));
           const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000));
           
           await Promise.race([placePromise, timeoutPromise]);
+          triggerStateUpdates();
           sendResponse(id, true, { status: 'success' });
         } catch (err) {
-          console.log(`[TEST 2] bot.placeBlock failed: ${err.message}`);
           sendResponse(id, true, { status: 'failed', error: err.message });
         }
         break;
@@ -493,6 +530,7 @@ rl.on('line', async (line) => {
           try {
             await furnace.takeOutput();
             furnace.close();
+            triggerStateUpdates();
             sendResponse(id, true);
           } catch (err) {
             furnace.close();
@@ -505,11 +543,17 @@ rl.on('line', async (line) => {
         break;
       }
 
-
       default:
-        sendResponse(id, false, {}, 'Unknown command type: ' + type);
+        sendResponse(id, false, {}, 'Unknown command method: ' + method);
     }
   } catch (err) {
     sendResponse(id, false, {}, err.message);
   }
+}
+
+// Start local TCP server
+const serverPort = 0; // Bind to random free port
+server.listen(serverPort, '127.0.0.1', () => {
+  const boundPort = server.address().port;
+  console.log(`PORT=${boundPort}`); // Python reads this on stdout to know where to connect!
 });

@@ -1,7 +1,6 @@
 import behaviors.mining as bm
 
-
-def handle_mine_line(agent, username, message):
+async def handle_mine_line(agent, username, message):
     # Parse length if provided, e.g., "mine line 15"
     # Otherwise, default to 10 to match original logic.
     parts = message.lower().split("mine line")
@@ -11,7 +10,7 @@ def handle_mine_line(agent, username, message):
         if extracted.isdigit():
             length = int(extracted)
             
-    bm.mine_line(agent, length)
+    await bm.mine_line(agent, length)
 
 
 def register_commands(registry):

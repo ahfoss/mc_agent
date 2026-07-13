@@ -1,13 +1,13 @@
 import json
 import argparse
-import time
+import asyncio
 from core.bot import BaseBot
 from core.command_registry import CommandRegistry
 from bots.farmer_bot import FarmerBot
 from commands import movement_cmds, construction_cmds, mining_cmds, items_cmds
 
 
-def main():
+async def main():
     # Setup command line parser to allow selecting bot type
     parser = argparse.ArgumentParser(description="Spawn a modular Minecraft bot.")
     parser.add_argument(
@@ -37,11 +37,9 @@ def main():
 
     if args.type == "farmer":
         print("Starting FarmerBot...")
-        # FarmerBot initializes its own registry and triggers internally
         bot = FarmerBot("farmer-bot", server_host=server_host, server_port=server_port, version=server_version)
     else:
         print("Starting BaseBot...")
-        # Setup registry and load standard commands for BaseBot
         registry = CommandRegistry()
         movement_cmds.register_commands(registry)
         construction_cmds.register_commands(registry)
@@ -56,14 +54,21 @@ def main():
             version=server_version
         )
 
-    # Keep the main thread alive so the bot remains connected
+    # Start the bot asynchronously
+    await bot.start()
+
     print("\nBot is successfully running! Press Ctrl+C to disconnect and exit.")
     try:
         while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
+            await asyncio.sleep(1)
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("\nDisconnecting bot and exiting...")
+    finally:
+        await bot.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

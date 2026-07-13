@@ -1,7 +1,16 @@
-# pyrefly: ignore [missing-import]
 import pytest
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import MagicMock, AsyncMock, patch
 from bots.farmer_bot import FarmerBot, handle_harvest
+
+from functools import wraps
+
+# Helper decorator for async tests
+def async_test(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(f(*args, **kwargs))
+    return wrapper
 
 @pytest.fixture
 def mock_bot_dependencies():
@@ -61,11 +70,13 @@ def test_farmer_bot_initialization(mock_bot_dependencies):
     # Verify farming specific command registered
     assert "harvest" in registered_commands
 
-def test_handle_harvest():
+@async_test
+async def test_handle_harvest():
     mock_agent = MagicMock()
     mock_bot = MagicMock()
+    mock_bot.chat = AsyncMock()
     mock_agent.bot = mock_bot
     
-    handle_harvest(mock_agent, "Player1", "harvest please")
+    await handle_harvest(mock_agent, "Player1", "harvest please")
     
     mock_bot.chat.assert_called_once_with("Harvesting capability is not fully implemented yet, but I am ready to farm!")

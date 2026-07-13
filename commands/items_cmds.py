@@ -1,12 +1,12 @@
 from typing import Any
 
-def handle_tell_inventory(agent: Any, username: str, message: str) -> None:
+async def handle_tell_inventory(agent: Any, username: str, message: str) -> None:
     """
     Handles the 'tell inventory' chat command by printing all items in the bot's inventory.
     """
     inventory = agent.bot.get_inventory()
     if not inventory:
-        agent.bot.chat("My inventory is empty.")
+        await agent.bot.chat("My inventory is empty.")
         return
         
     items_desc = []
@@ -15,9 +15,9 @@ def handle_tell_inventory(agent: Any, username: str, message: str) -> None:
             items_desc.append(f"{count} {item_name}")
             
     if not items_desc:
-        agent.bot.chat("My inventory is empty.")
+        await agent.bot.chat("My inventory is empty.")
     else:
-        agent.bot.chat("Inventory: " + ", ".join(items_desc))
+        await agent.bot.chat("Inventory: " + ", ".join(items_desc))
 
 
 def register_commands(registry: Any) -> None:

@@ -1,6 +1,6 @@
-# pyrefly: ignore [missing-import]
 import pytest
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import MagicMock, AsyncMock
 from core.command_registry import CommandRegistry
 
 def test_command_registration_and_case_insensitive_matching():
@@ -12,19 +12,19 @@ def test_command_registration_and_case_insensitive_matching():
     mock_bot = MagicMock()
     
     # Matching exact case
-    matched = registry.dispatch(mock_bot, "Player1", "BUILD SHELTER")
+    matched = asyncio.run(registry.dispatch(mock_bot, "Player1", "BUILD SHELTER"))
     assert matched is True
     mock_handler.assert_called_once_with(mock_bot, "Player1", "BUILD SHELTER")
 
     # Matching case-insensitive
     mock_handler.reset_mock()
-    matched = registry.dispatch(mock_bot, "Player1", "build shelter")
+    matched = asyncio.run(registry.dispatch(mock_bot, "Player1", "build shelter"))
     assert matched is True
     mock_handler.assert_called_once_with(mock_bot, "Player1", "build shelter")
 
     # Matching substring
     mock_handler.reset_mock()
-    matched = registry.dispatch(mock_bot, "Player1", "please build shelter right now")
+    matched = asyncio.run(registry.dispatch(mock_bot, "Player1", "please build shelter right now"))
     assert matched is True
     mock_handler.assert_called_once_with(mock_bot, "Player1", "please build shelter right now")
 
@@ -34,7 +34,7 @@ def test_command_no_match():
     registry.register("mine line", mock_handler)
 
     mock_bot = MagicMock()
-    matched = registry.dispatch(mock_bot, "Player1", "build shelter")
+    matched = asyncio.run(registry.dispatch(mock_bot, "Player1", "build shelter"))
     
     assert matched is False
     mock_handler.assert_not_called()
@@ -48,10 +48,11 @@ def test_command_exception_handling():
     registry.register("quit", mock_handler)
 
     mock_bot = MagicMock()
+    mock_bot.chat = AsyncMock()
     
     # Dispatch should handle exception gracefully, returning True (since it matched)
-    matched = registry.dispatch(mock_bot, "Player1", "quit")
+    matched = asyncio.run(registry.dispatch(mock_bot, "Player1", "quit"))
     
     assert matched is True
     mock_handler.assert_called_once_with(mock_bot, "Player1", "quit")
-    mock_bot.bot.chat.assert_called_once_with("I encountered an error executing 'quit'.")
+    mock_bot.chat.assert_called_once_with("I encountered an error executing 'quit'.")
