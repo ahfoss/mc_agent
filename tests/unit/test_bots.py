@@ -80,3 +80,38 @@ async def test_handle_harvest():
     await handle_harvest(mock_agent, "Player1", "harvest please")
     
     mock_bot.chat.assert_called_once_with("Harvesting capability is not fully implemented yet, but I am ready to farm!")
+
+
+@async_test
+async def test_stop_command(mock_bot_dependencies):
+    mock_mf, mock_pf, mock_bot_obj = mock_bot_dependencies
+    
+    bot = FarmerBot("FarmerJoe", "localhost", 25565, reconnect=False)
+    await bot.start()
+    
+    async def dummy_loop():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            dummy_loop.cancelled = True
+            raise
+    dummy_loop.cancelled = False
+    
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(dummy_loop())
+    bot.current_tasks.add(task)
+    
+    bot.stop_movement = AsyncMock()
+    bot.chat = AsyncMock()
+    
+    # Yield control to the event loop so the task starts running!
+    await asyncio.sleep(0.001)
+    
+    chat_listener = bot._listeners["chat"][0]
+    chat_listener("Player1", "stop")
+    
+    await asyncio.sleep(0.01)
+    
+    assert dummy_loop.cancelled is True
+    bot.stop_movement.assert_called_once()
+    bot.chat.assert_called_with("Stopping all actions.")

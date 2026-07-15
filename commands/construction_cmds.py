@@ -1,5 +1,8 @@
 import behaviors.shelter as bs
 import capabilities.construction as ucon
+import behaviors.forage as bf
+import behaviors.iron_mining as bim
+import re
 
 async def handle_build_shelter(agent, username, message):
     await bs.build_shelter(agent)
@@ -80,8 +83,24 @@ async def handle_test(agent, username, message):
         await agent.bot.chat("Unknown test case. Use 'test 1' or 'test 2'.")
 
 
+async def handle_forage(agent, username, message):
+    amount = 1
+    match = re.search(r'\d+', message)
+    if match:
+        amount = int(match.group())
+    await bf.forage_food(agent, amount)
+
+
+async def handle_mine_iron(agent, username, message):
+    await bim.mine_iron(agent)
+
+
 def register_commands(registry):
     registry.register("build shelter", handle_build_shelter)
     registry.register("furnish shelter", handle_furnish_shelter)
     registry.register("place block", handle_place_block)
     registry.register("test", handle_test)
+    registry.register("meat", handle_forage)
+    registry.register("forage", handle_forage)
+    registry.register("food", handle_forage)
+    registry.register("mine iron", handle_mine_iron)

@@ -319,6 +319,10 @@ async def test_build_shelter_integration_volume():
     mock_bot.position = MockVec3(100, 64, 100)
     mock_agent.bot = mock_bot
     
+    async def mock_move_to(target, range_val=1, can_dig=None):
+        mock_bot.position = target
+    mock_bot.move_to = AsyncMock(side_effect=mock_move_to)
+    
     # Real-like memory store
     mem_store = {}
     mock_agent.memory.retrieve.side_effect = lambda key: mem_store.get(key)
@@ -434,3 +438,147 @@ async def test_furnish_shelter1_smelt_charcoal():
          
          # Verify recursive torch crafting call
          mock_craft_tree.assert_any_call(mock_agent, "torch", quantity=3, crafting_table_loc=MockVec3(100, 56, 106))
+
+@async_test
+async def test_furnish_shelter1_stale_crafting_table_memory():
+    mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    mock_bot.position = MockVec3(100, 56, 105)
+    mock_bot.get_block = AsyncMock(return_value=None)
+    mock_bot.find_block = AsyncMock(return_value=None)
+    mock_bot.chat = AsyncMock()
+    mock_bot.move_to = AsyncMock()
+    mock_bot.place_block = AsyncMock()
+    mock_bot.get_inventory.return_value = {"oak_planks": 64, "cobblestone": 64, "charcoal": 5}
+    mock_agent.bot = mock_bot
+    
+    # Mock memory retrieval: shelter Y = 62, expected Y = 54, but stored Y = 62
+    def retrieve_mock(key):
+        if key == "shelter_location":
+            return MockVec3(93, 62, 100)
+        elif key == "crafting_table_position":
+            return MockVec3(100, 62, 106) # Mismatched stale coordinate!
+        elif key == "adjacent_crafting_table":
+            return MockVec3(100, 62, 105)
+        return None
+    mock_agent.memory.retrieve.side_effect = retrieve_mock
+    
+    with patch('capabilities.movement.move_absolute', new_callable=AsyncMock) as mock_move_abs, \
+         patch('capabilities.movement.move_relative_to_self', new_callable=AsyncMock) as mock_move_rel, \
+         patch('capabilities.crafting.craft_tree', new_callable=AsyncMock) as mock_craft_tree, \
+         patch('capabilities.construction.place_block_on_ground_relative_to_self', new_callable=AsyncMock) as mock_place, \
+         patch('capabilities.construction.place_block_relative_to_block', new_callable=AsyncMock) as mock_place_rel_block, \
+         patch('capabilities.crafting.craft_any_door', new_callable=AsyncMock) as mock_craft_door:
+         
+         mock_craft_door.return_value = "oak_door"
+         mock_craft_tree.return_value = True  # Successful crafting
+         
+         await bs.furnish_shelter1(mock_agent)
+         
+         # Verify that stale keys are deleted
+         mock_agent.memory.delete.assert_any_call("crafting_table_position")
+         mock_agent.memory.delete.assert_any_call("crafting_area")
+         mock_agent.memory.delete.assert_any_call("adjacent_crafting_table")
+         
+         # Verify fallback placement coordinate is used inside the chamber
+         mock_place.assert_any_call(mock_agent, "crafting_table", 0, -1, 1)
+
+
+@async_test
+async def test_forage_food_success():
+    from behaviors.forage import forage_food
+    mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    mock_bot.position = MockVec3(100, 60, 100)
+    mock_bot.chat = AsyncMock()
+    mock_bot.move_to = AsyncMock()
+    mock_bot.equip = AsyncMock()
+    mock_bot.attack = AsyncMock()
+    mock_bot.deposit = AsyncMock()
+    mock_bot.get_inventory.return_value = {"raw_beef": 0, "iron_sword": 1}
+    mock_agent.bot = mock_bot
+
+    # Set up mock search results for find_entity:
+    cow_exists = True
+    async def mock_find_entity(entity_type, max_distance=32):
+        if entity_type == "cow" and cow_exists:
+            return {
+                "id": 123,
+                "name": "cow",
+                "position": {"x": 105, "y": 60, "z": 100}
+            }
+        return None
+
+    mock_bot.find_entity.side_effect = mock_find_entity
+    mock_bot.find_block = AsyncMock(return_value=None)
+
+    # Mock attack to set cow_exists = False
+    async def mock_attack(mob_id):
+        nonlocal cow_exists
+        cow_exists = False
+    mock_bot.attack.side_effect = mock_attack
+
+    # Mock inventory updating upon pickup
+    def side_effect_inventory():
+        if not cow_exists:
+            return {"raw_beef": 2, "iron_sword": 1}
+        return {"raw_beef": 0, "iron_sword": 1}
+    mock_bot.get_inventory.side_effect = side_effect_inventory
+
+    def retrieve_mock(key):
+        if key == "shelter_location":
+            return MockVec3(95, 68, 95)
+        elif key == "crafting_table_position":
+            return MockVec3(104, 60, 100)
+        return None
+    mock_agent.memory.retrieve.side_effect = retrieve_mock
+
+    # Run forage_food behavior
+    await forage_food(mock_agent, 2)
+
+    # Verify lookups and actions
+    mock_bot.find_entity.assert_any_call("cow", max_distance=32)
+    mock_bot.move_to.assert_any_call(MockVec3(105, 60, 100), range_val=2)
+    mock_bot.equip.assert_called_with("iron_sword", "hand")
+    mock_bot.attack.assert_called_with(123)
+    mock_bot.deposit.assert_called_with(MockVec3(108, 60, 100), "raw_beef", 2)
+
+
+@async_test
+async def test_mine_iron_success():
+    from behaviors.iron_mining import mine_iron
+    mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    mock_bot.position = MockVec3(100, 60, 100)
+    mock_bot.chat = AsyncMock()
+    mock_bot.dig = AsyncMock()
+    mock_bot.move_to = AsyncMock()
+    mock_bot.equip = AsyncMock()
+    mock_bot.get_inventory.return_value = {"stone_pickaxe": 1}
+    mock_agent.bot = mock_bot
+
+    # Set up mock block search
+    ore_found = False
+    async def mock_find_block(block_name, max_distance=6):
+        nonlocal ore_found
+        if block_name == "iron_ore" and not ore_found:
+            ore_found = True
+            return MockVec3(102, 60, 100)
+        return None
+    mock_bot.find_block.side_effect = mock_find_block
+
+    # Run mine_iron, raise CancelledError to stop the infinite loop
+    mock_bot.move_to.side_effect = [None, None, asyncio.CancelledError()]
+
+    try:
+        await mine_iron(mock_agent)
+    except asyncio.CancelledError:
+        pass
+
+    # Verify that it dug the forward blocks
+    mock_bot.dig.assert_any_call(MockVec3(101, 61, 100))
+    mock_bot.dig.assert_any_call(MockVec3(101, 60, 100))
+    
+    # Verify it scanned for ore and dug the found ore
+    mock_bot.find_block.assert_any_call("iron_ore", max_distance=6)
+    mock_bot.dig.assert_any_call(MockVec3(102, 60, 100))

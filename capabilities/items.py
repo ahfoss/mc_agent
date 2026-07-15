@@ -6,6 +6,15 @@ door_types: List[str] = [
     'pale_oak_door', 'warped_door', 'crimson_door',
 ]
 
+MEAT_ITEMS: List[str] = ["raw_beef", "raw_mutton", "raw_porkchop", "raw_chicken", "raw_rabbit"]
+food_mobs: List[str] = ["cow", "sheep", "pig", "chicken", "rabbit"]
+
+FOOD_ITEMS: List[str] = MEAT_ITEMS + [
+    "melon_slice", "melon", "sweet_berries", "apple", "bread", "carrot", "potato"
+]
+
+axes: List[str] = ["netherite_axe", "diamond_axe", "iron_axe", "golden_axe", "stone_axe", "copper_axe", "wooden_axe"]
+
 
 def get_item_keywords(agent: Any, keyword_list: List[str]) -> Dict[str, int]:
     """
@@ -42,13 +51,17 @@ def has_item(agent: Any, item_name: str, quantity: int = 1) -> bool:
     return False
 
 
-def get_item_count(agent: Any, item_name: str) -> int:
+def get_item_count(agent: Any, item_name_or_list: Any) -> int:
     """
-    Gets the quantity of the item in the bot's inventory, returning 0 if missing or mocked.
+    Gets the quantity of the item(s) in the bot's inventory.
+    Accepts a single item name (str) or a list/tuple/set of item names.
     """
+    if isinstance(item_name_or_list, (list, tuple, set)):
+        return sum(get_item_count(agent, item) for item in item_name_or_list)
+
     inv = agent.bot.get_inventory()
     if hasattr(inv, "get"):
-        val = inv.get(item_name, 0)
+        val = inv.get(item_name_or_list, 0)
         if hasattr(val, "assert_called") or "Mock" in type(val).__name__:
             return 0
         try:

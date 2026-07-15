@@ -262,8 +262,8 @@ async def furnish_shelter1(agent: Any) -> None:
         else:
             await agent.bot.chat("Missing logs or planks to smelt 1 charcoal.")
 
-    # Make 5 charcoal by burning 5 logs with charcoal
-    if ui.get_item_count(agent, "charcoal") < 5:
+    # Make 3 charcoal by burning 3 logs with charcoal
+    if ui.get_item_count(agent, "charcoal") < 3:
         log_name = None
         for item_name in agent.bot.get_inventory():
             if item_name.endswith("_log") or item_name.endswith("_stem"):
@@ -272,7 +272,7 @@ async def furnish_shelter1(agent: Any) -> None:
                     break
 
         if log_name and ui.has_item(agent, "charcoal", 1):
-            await agent.bot.chat(f"Smelting 5 charcoal using {log_name} and charcoal fuel...")
+            await agent.bot.chat(f"Smelting 3 charcoal using {log_name} and charcoal fuel...")
             furnace_pos = crafting_table_pos + (1, 0, 0)
             try:
                 await agent.bot.send_command("smelt", {
@@ -281,13 +281,13 @@ async def furnish_shelter1(agent: Any) -> None:
                     "furnace_z": int(furnace_pos.z),
                     "input_item_name": log_name,
                     "fuel_item_name": "charcoal",
-                    "input_count": 5,
+                    "input_count": 3,
                     "fuel_count": 1
                 }, timeout=75.0)
             except Exception as e:
-                await agent.bot.chat(f"Smelting 5 charcoal failed: {e}")
+                await agent.bot.chat(f"Smelting 3 charcoal failed: {e}")
         else:
-            await agent.bot.chat("Missing logs or charcoal fuel to smelt 5 charcoal.")
+            await agent.bot.chat("Missing logs or charcoal fuel to smelt 3 charcoal.")
 
     # Craft three torches
     if ui.get_item_count(agent, "torch") < 3:
@@ -310,9 +310,10 @@ async def furnish_shelter1(agent: Any) -> None:
             torch_abs = adjacent_table + torch_offset
             block = await agent.bot.get_block(torch_abs)
             if block is None or "torch" not in block.name:
-                # Stand near the target position on the floor
-                await agent.bot.move_to(adjacent_table + (3, 0, -3), range_val = 0)
-                await agent.bot.move_to(torch_abs + (0, -2, 0), range_val = 0)
+                try:
+                    await agent.bot.move_to(torch_abs, range_val=3)
+                except Exception as e:
+                    print(f"Pathfinding to torch at {torch_abs} failed: {e}")
                 if ui.has_item(agent, "torch", 1):
                     await agent.bot.chat(f"Placing torch at {torch_abs}...")
                     await agent.bot.place_block("torch", torch_abs - iface, Vec3Class(0,0,0) + iface)

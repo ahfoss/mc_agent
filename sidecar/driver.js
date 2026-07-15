@@ -45,6 +45,38 @@ function sendResponse(id, success, result = {}, error = null) {
   }
 }
 
+// Helper to clean entity names (removes namespaces like "minecraft:")
+function getCleanEntityName(entity) {
+  if (!entity) return '';
+  const rawName = entity.name || entity.displayName || '';
+  if (!rawName) return '';
+  const parts = rawName.split(':');
+  return parts[parts.length - 1].toLowerCase();
+}
+
+// Helper to check if an entity represents a living entity/mob (excluding players, items, projectiles, etc.)
+function isLivingEntity(entity) {
+  if (!entity) return false;
+  const nonLivingTypes = new Set(['player', 'object', 'orb', 'other']);
+  return !nonLivingTypes.has(entity.type);
+}
+
+// Helper to match an entity against a search type
+function matchEntity(entity, type) {
+  if (!isLivingEntity(entity)) return false;
+  if (type === undefined) return true;
+
+  const searchType = type.toLowerCase();
+  const cleanName = getCleanEntityName(entity);
+  if (cleanName === searchType) return true;
+
+  // Fallback check on displayName if name check fails
+  if (entity.displayName && entity.displayName.toLowerCase() === searchType) return true;
+
+  return false;
+}
+
+
 // Bot listeners
 bot.once('spawn', () => {
   sendEvent('spawn', { version: bot.version });
@@ -279,6 +311,11 @@ async function handleCommand(id, method, params) {
         }
 
         await bot.equip(item, 'hand');
+        if (!bot.heldItem || bot.heldItem.name !== item.name) {
+          await new Promise(r => setTimeout(r, 200));
+          await bot.equip(item, 'hand');
+          await new Promise(r => setTimeout(r, 100));
+        }
 
         const refBlock = bot.blockAt(new vec3.Vec3(x, y, z));
         if (!refBlock) {
@@ -539,6 +576,86 @@ async function handleCommand(id, method, params) {
         } else {
           furnace.close();
           sendResponse(id, false, {}, 'Smelting timed out or failed');
+        }
+        break;
+      }
+
+      case 'stop': {
+        bot.pathfinder.setGoal(null);
+        if (bot.currentWindow) {
+          bot.closeWindow(bot.currentWindow);
+        }
+        sendResponse(id, true);
+        break;
+      }
+
+      case 'find_entity': {
+        const { type, max_distance } = params;
+        const dist = max_distance || 32;
+        let bestEntity = null;
+        let bestDist = dist;
+
+        for (const entityId in bot.entities) {
+          const entity = bot.entities[entityId];
+          if (matchEntity(entity, type)) {
+            const d = bot.entity.position.distanceTo(entity.position);
+            if (d < bestDist) {
+              bestDist = d;
+              bestEntity = entity;
+            }
+          }
+        }
+
+        if (bestEntity) {
+          const nameVal = bestEntity.name || bestEntity.displayName || type || "unknown";
+          sendResponse(id, true, {
+            entity: {
+              id: bestEntity.id,
+              name: nameVal,
+              position: { x: bestEntity.position.x, y: bestEntity.position.y, z: bestEntity.position.z }
+            }
+          });
+        } else {
+          sendResponse(id, true, { entity: null });
+        }
+        break;
+      }
+
+      case 'attack': {
+        const { entity_id } = params;
+        const entity = bot.entities[entity_id];
+        if (!entity) {
+          sendResponse(id, false, {}, 'Entity not found');
+          break;
+        }
+        try {
+          await bot.lookAt(entity.position.offset(0, 1, 0));
+          await bot.attack(entity);
+          sendResponse(id, true);
+        } catch (err) {
+          sendResponse(id, false, {}, err.message);
+        }
+        break;
+      }
+
+      case 'deposit': {
+        const { chest_x, chest_y, chest_z, item_name, quantity } = params;
+        const chestBlock = bot.blockAt(new vec3.Vec3(chest_x, chest_y, chest_z));
+        if (!chestBlock || chestBlock.name !== 'chest') {
+          sendResponse(id, false, {}, 'Chest not found at specified coordinates');
+          break;
+        }
+
+        try {
+          const chest = await bot.openChest(chestBlock);
+          const mcData = require('minecraft-data')(bot.version);
+          const item_id = mcData.itemsByName[item_name].id;
+          await chest.deposit(item_id, null, quantity);
+          chest.close();
+          triggerStateUpdates();
+          sendResponse(id, true);
+        } catch (err) {
+          sendResponse(id, false, {}, `Failed to deposit: ${err.message}`);
         }
         break;
       }

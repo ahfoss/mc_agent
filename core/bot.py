@@ -53,6 +53,7 @@ class BaseBot:
         
         # Support mock listeners in test lifecycle
         self._listeners = {}
+        self.current_tasks = set()
 
         # Mock items/blocks compatibility
         self._id_to_name = {1: "dirt", 2: "oak_planks", 3: "oak_door", 4: "crafting_table"}
@@ -92,10 +93,29 @@ class BaseBot:
             if username == self.username:
                 return
             self.log(f"Chat received from {username}: '{message}'")
+            
+            # Stop command logic: cancel active tasks immediately
+            if "stop" in message.lower():
+                self.log("Stop command received. Cancelling active tasks...")
+                for task in list(self.current_tasks):
+                    task.cancel()
+                self.current_tasks.clear()
+                
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.stop_movement())
+                    loop.create_task(self.chat("Stopping all actions."))
+                except RuntimeError:
+                    asyncio.run(self.stop_movement())
+                    asyncio.run(self.chat("Stopping all actions."))
+                return
+
             if self.command_registry:
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(self.command_registry.dispatch(self, username, message))
+                    task = loop.create_task(self.command_registry.dispatch(self, username, message))
+                    self.current_tasks.add(task)
+                    task.add_done_callback(lambda t: self.current_tasks.discard(t))
                 except RuntimeError:
                     asyncio.run(self.command_registry.dispatch(self, username, message))
 
@@ -425,6 +445,39 @@ class BaseBot:
             "item_name": item_name,
             "quantity": quantity,
             "crafting_table_pos": table_pos_dict
+        })
+        return True
+
+    async def stop_movement(self):
+        await self.send_command("stop")
+        return True
+
+    async def find_entity(self, entity_type=None, max_distance=32):
+        res = await self.send_command("find_entity", {
+            "type": entity_type,
+            "max_distance": max_distance
+        })
+        entity_data = res.get("entity")
+        if entity_data:
+            return entity_data
+        return None
+
+    async def attack(self, entity_id):
+        await self.send_command("attack", {
+            "entity_id": entity_id
+        })
+        return True
+
+    async def deposit(self, chest_pos, item_name, quantity):
+        x = chest_pos.x if hasattr(chest_pos, "x") else chest_pos[0]
+        y = chest_pos.y if hasattr(chest_pos, "y") else chest_pos[1]
+        z = chest_pos.z if hasattr(chest_pos, "z") else chest_pos[2]
+        await self.send_command("deposit", {
+            "chest_x": math.floor(x),
+            "chest_y": math.floor(y),
+            "chest_z": math.floor(z),
+            "item_name": item_name,
+            "quantity": quantity
         })
         return True
 

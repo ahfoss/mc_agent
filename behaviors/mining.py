@@ -100,5 +100,30 @@ async def dig_staircase_down(agent: Any, depth: int) -> None:
     """
     Digs a staircase down for depth levels.
     """
-    for _ in range(depth):
-        await burrow_one_block_down_positive_x(agent)
+    Vec3Class = get_vec3()
+    pos = agent.bot.position
+    start_pos = Vec3Class(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z))
+    
+    for i in range(depth):
+        step_x = start_pos.x + (i + 1)
+        step_y = start_pos.y - (i + 1)
+        step_z = start_pos.z
+        
+        agent.log(f"[STAIRCASE] Digging step {i+1}/{depth} at X={step_x}, Y={step_y}")
+        
+        await agent.bot.dig(Vec3Class(step_x, step_y + 2, step_z))
+        await agent.bot.dig(Vec3Class(step_x, step_y + 1, step_z))
+        await agent.bot.dig(Vec3Class(step_x, step_y, step_z))
+        
+        target_step = Vec3Class(step_x + 0.5, step_y, step_z + 0.5)
+        try:
+            await agent.bot.move_to(target_step, range_val=0)
+        except Exception as e:
+            agent.log(f"[STAIRCASE] Move to step {i+1} failed: {e}. Retrying dig and move.")
+            await agent.bot.dig(Vec3Class(step_x, step_y + 2, step_z))
+            await agent.bot.dig(Vec3Class(step_x, step_y + 1, step_z))
+            await agent.bot.dig(Vec3Class(step_x, step_y, step_z))
+            try:
+                await agent.bot.move_to(target_step, range_val=0)
+            except Exception:
+                pass

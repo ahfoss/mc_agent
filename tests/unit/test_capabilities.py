@@ -83,7 +83,7 @@ async def test_move_relative_to_self():
     
     await um.move_relative_to_self(mock_agent, 1, 0, -2)
     
-    mock_bot.move_to.assert_called_once_with(MockVec3(11, 64, 8), range_val=0)
+    mock_bot.move_to.assert_called_once_with(MockVec3(11.5, 64.0, 8.5), range_val=0)
 
 
 # ==================== CONSTRUCTION CAPABILITY TESTS ====================
@@ -254,3 +254,58 @@ async def test_craft_any_door_memory_success():
     assert res == "oak_door"
     mock_bot.find_block.assert_not_called()
     mock_bot.craft.assert_any_call("oak_door", 1, MockVec3(10, 63, 11))
+
+
+@async_test
+async def test_get_item_count_list_success():
+    import capabilities.items as ui
+    mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    mock_bot.get_inventory.return_value = {"raw_beef": 3, "raw_mutton": 2, "apple": 1}
+    mock_agent.bot = mock_bot
+    
+    count = ui.get_item_count(mock_agent, ["raw_beef", "raw_mutton"])
+    assert count == 5
+    
+    count_single = ui.get_item_count(mock_agent, "raw_beef")
+    assert count_single == 3
+    
+    count_missing = ui.get_item_count(mock_agent, "raw_chicken")
+    assert count_missing == 0
+
+
+@async_test
+async def test_hunt_mob_success():
+    import capabilities.fighting as uf
+    mock_agent = MagicMock()
+    mock_bot = MagicMock()
+    mock_bot.get_inventory.return_value = {"stone_sword": 1}
+    mock_bot.move_to = AsyncMock()
+    mock_bot.equip = AsyncMock()
+    mock_bot.attack = AsyncMock()
+    
+    cow_exists = True
+    async def mock_find_entity(mob_name, max_distance=20):
+        nonlocal cow_exists
+        if mob_name == "cow" and cow_exists:
+            return {
+                "id": 123,
+                "name": "cow",
+                "position": {"x": 105, "y": 60, "z": 100}
+            }
+        return None
+    mock_bot.find_entity.side_effect = mock_find_entity
+    
+    async def mock_attack(mob_id):
+        nonlocal cow_exists
+        cow_exists = False
+    mock_bot.attack.side_effect = mock_attack
+    
+    mock_agent.bot = mock_bot
+    
+    res = await uf.hunt_mob(mock_agent, 123, "cow", {"x": 105, "y": 60, "z": 100})
+    assert res is True
+    
+    mock_bot.move_to.assert_any_call(MockVec3(105, 60, 100), range_val=2)
+    mock_bot.equip.assert_called_with("stone_sword", "hand")
+    mock_bot.attack.assert_called_with(123)

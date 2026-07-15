@@ -27,40 +27,27 @@ def is_port_open(host, port):
 @pytest.fixture(scope="module")
 def integration_server():
     """
-    Looks for an active Minecraft server on localhost:25565.
-    If none exists, it attempts to boot a Flying Squid node server dynamically.
-    If that fails, it gracefully skips the test.
+    Dynamically boots a local Flying Squid server on a free port.
     """
     host = "127.0.0.1"
     port = 52188
-    server_process = None
+    while is_port_open(host, port):
+        port += 1
 
-    try:
-        config_path = "config.json"
-        if os.path.exists(config_path):
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            config_port = config.get("server_port", 25565)
-            if is_port_open(host, config_port):
-                port = config_port
-            elif is_port_open(host, 25565):
-                port = 25565
-    except Exception as e:
-        print(f"[Integration Server Setup] Warn: Failed to read config.json: {e}")
-    
+    server_process = None
     config_dir = "config"
     settings_file = os.path.join(config_dir, "settings.json")
     created_config_dir = False
     created_settings_file = False
 
-    if not is_port_open(host, port):
+    if True:
         print(f"\n[Integration Server Setup] No Minecraft server found on {host}:{port}. Attempting npx flying-squid...")
         try:
             if not os.path.exists(config_dir):
                 os.makedirs(config_dir, exist_ok=True)
                 created_config_dir = True
             
-            if not os.path.exists(settings_file):
+            if True:
                 settings_data = {
                     "port": port,
                     "max-players": 10,
@@ -80,12 +67,12 @@ def integration_server():
 
         try:
             server_process = subprocess.Popen(
-                ["npx", "-y", "flying-squid"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                "npx -y flying-squid",
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 shell=True
             )
-            for i in range(30):
+            for i in range(60):
                 if is_port_open(host, port):
                     print(f"[Integration Server Setup] Server booted successfully after {i} seconds.")
                     break
@@ -131,9 +118,16 @@ def integration_server():
 @async_test
 async def test_integration_build_and_furnish_shelter(integration_server):
     host, port = integration_server
-    
     from bots.farmer_bot import FarmerBot
-    
+
+    # Clean up memory file if exists to prevent stale coordinates
+    memory_path = "data/memory/memory_TesterBot.json"
+    if os.path.exists(memory_path):
+        try:
+            os.remove(memory_path)
+        except Exception:
+            pass
+
     bot_agent = None
     try:
         # 1. Connect bot client
@@ -157,35 +151,56 @@ async def test_integration_build_and_furnish_shelter(integration_server):
         original_pos = bot_agent.bot.position
         print(f"Bot spawned successfully at: {original_pos}")
     
-        # 3. Test "build shelter" command execution via chat emission
+        # 3. Test "build shelter" command execution
         print("Testing command: 'build shelter'...")
-        bot_agent.bot.emit("chat", "Player1", "build shelter")
-        await asyncio.sleep(20.0)  # excavation delay
+        matched = await bot_agent.command_registry.dispatch(bot_agent, "Player1", "build shelter")
+        assert matched is True, "Command 'build shelter' did not match."
     
         shelter_loc = bot_agent.memory.retrieve("shelter_location")
         assert shelter_loc is not None, "Bot did not store 'shelter_location' in memory."
         assert abs(shelter_loc.x - original_pos.x) < 1.0
         assert abs(shelter_loc.z - original_pos.z) < 1.0
     
-        # 4. Test "furnish shelter" command execution via chat emission
+        # 4. Test "furnish shelter" command execution
         print("Testing command: 'furnish shelter'...")
-        await bot_agent.bot.chat("/give @s oak_planks 64")
-        await bot_agent.bot.chat("/give @s cobblestone 64")
+        await bot_agent.bot.chat("/give TesterBot oak_planks 64")
+        await bot_agent.bot.chat("/give TesterBot cobblestone 64")
+        await bot_agent.bot.chat("/give TesterBot oak_log 64")
         await asyncio.sleep(1.0)
         
-        bot_agent.bot.emit("chat", "Player1", "furnish shelter")
+        matched = await bot_agent.command_registry.dispatch(bot_agent, "Player1", "furnish shelter")
+        assert matched is True, "Command 'furnish shelter' did not match."
+
+        # 5. Verify actual placed blocks in the world
+        print("Verifying placed blocks in the world...")
         
-        # Wait up to 30 seconds for the adjacent coordinate in memory
-        timeout = 30
-        start_time = time.time()
-        adjacent_spot = None
-        while (time.time() - start_time) < timeout:
-            adjacent_spot = bot_agent.memory.retrieve("adjacent_crafting_table")
-            if adjacent_spot is not None:
-                break
-            await asyncio.sleep(1)
-            
-        assert adjacent_spot is not None, "Bot failed to store 'adjacent_crafting_table' in memory (furnish shelter failed or timed out)."
+        # Crafting Table
+        ct_pos = bot_agent.memory.retrieve("crafting_table_position")
+        assert ct_pos is not None, "Crafting table position was not stored in memory."
+        assert ct_pos.y == shelter_loc.y - 8, f"Crafting table Y ({ct_pos.y}) was not underground Y ({shelter_loc.y - 8})."
+        block_ct = await bot_agent.bot.get_block(ct_pos)
+        assert block_ct is not None and block_ct.name == "crafting_table", f"Expected crafting table at {ct_pos}, found: {block_ct.name if block_ct else 'None'}"
+        
+        # Door (top half at Y-6)
+        floored_pos = shelter_loc + (9, -8, 5)
+        door_pos = floored_pos + (-2, 2, -5)
+        block_door = await bot_agent.bot.get_block(door_pos)
+        assert block_door is not None and block_door.name.endswith("_door"), f"Expected door at {door_pos}, found: {block_door.name if block_door else 'None'}"
+        
+        # Furnace (at crafting table + 1, 0, 0)
+        furnace_pos = ct_pos + (1, 0, 0)
+        block_furnace = await bot_agent.bot.get_block(furnace_pos)
+        assert block_furnace is not None and block_furnace.name == "furnace", f"Expected furnace at {furnace_pos}, found: {block_furnace.name if block_furnace else 'None'}"
+        
+        # Chest 1 & Chest 2 (at crafting table + 4, 0, 0 and +5, 0, 0)
+        chest1_pos = ct_pos + (4, 0, 0)
+        chest2_pos = ct_pos + (5, 0, 0)
+        block_chest1 = await bot_agent.bot.get_block(chest1_pos)
+        block_chest2 = await bot_agent.bot.get_block(chest2_pos)
+        assert block_chest1 is not None and block_chest1.name == "chest", f"Expected chest at {chest1_pos}, found: {block_chest1.name if block_chest1 else 'None'}"
+        assert block_chest2 is not None and block_chest2.name == "chest", f"Expected chest at {chest2_pos}, found: {block_chest2.name if block_chest2 else 'None'}"
+        
+        print("All placed blocks successfully verified in the world!")
     
     finally:
         if bot_agent:

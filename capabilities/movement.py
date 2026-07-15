@@ -1,3 +1,4 @@
+import math
 from typing import Any
 from core.bot import Vec3
 
@@ -27,9 +28,9 @@ async def move_relative_to_self(agent: Any, x_offset: float, y_offset: float, z_
     Commands the bot to walk to relative block coordinates, aligned to block centers.
     """
     current_pos = agent.bot.position
-    fx = current_pos.x + x_offset
-    fy = current_pos.y + y_offset
-    fz = current_pos.z + z_offset
+    fx = math.floor(current_pos.x) + 0.5 + x_offset
+    fy = math.floor(current_pos.y) + y_offset
+    fz = math.floor(current_pos.z) + 0.5 + z_offset
     target = Vec3(fx, fy, fz)
     try:
         print(f"Attempting to pathfind to {target.x}, {target.y}, {target.z}...")
