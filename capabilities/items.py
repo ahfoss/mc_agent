@@ -9,11 +9,24 @@ door_types: List[str] = [
 MEAT_ITEMS: List[str] = ["raw_beef", "raw_mutton", "raw_porkchop", "raw_chicken", "raw_rabbit"]
 food_mobs: List[str] = ["cow", "sheep", "pig", "chicken", "rabbit"]
 
+MOB_TO_MEAT: Dict[str, str] = {
+    "cow": "raw_beef",
+    "sheep": "raw_mutton",
+    "pig": "raw_porkchop",
+    "chicken": "raw_chicken",
+    "rabbit": "raw_rabbit"
+}
+
 FOOD_ITEMS: List[str] = MEAT_ITEMS + [
     "melon_slice", "melon", "sweet_berries", "apple", "bread", "carrot", "potato"
 ]
 
 axes: List[str] = ["netherite_axe", "diamond_axe", "iron_axe", "golden_axe", "stone_axe", "copper_axe", "wooden_axe"]
+
+weapons: List[str] = [
+    "netherite_sword", "diamond_sword", "iron_sword", "stone_sword", "golden_sword", "wooden_sword",
+    "netherite_axe", "diamond_axe", "iron_axe", "stone_axe", "golden_axe", "wooden_axe"
+]
 
 
 def get_item_keywords(agent: Any, keyword_list: List[str]) -> Dict[str, int]:
@@ -78,4 +91,27 @@ def has_any_door(agent: Any) -> bool:
     for door in door_types:
         if has_item(agent, door, 1):
             return True
+    return False
+
+
+def get_current_meat_count(agent: Any) -> int:
+    """
+    Gets the total quantity of raw meat items in the bot's inventory.
+    """
+    return get_item_count(agent, MEAT_ITEMS)
+
+
+async def equip_best_weapon(agent: Any) -> bool:
+    """
+    Equips the best available sword or axe in the bot's inventory.
+    """
+    tool_to_equip = None
+    inv = agent.bot.get_inventory()
+    for tool in weapons:
+        if inv.get(tool, 0) > 0:
+            tool_to_equip = tool
+            break
+    if tool_to_equip:
+        await agent.bot.equip(tool_to_equip, "hand")
+        return True
     return False

@@ -3,7 +3,22 @@
 // Helper to clean entity names (removes namespaces like "minecraft:")
 function getCleanEntityName(entity) {
   if (!entity) return '';
-  const rawName = entity.name || entity.displayName || '';
+  
+  let rawName = '';
+  // Handle dropped items
+  if (entity.name === 'item' || entity.name === 'Item' || entity.name === 'item_stack') {
+    if (typeof entity.getDroppedItem === 'function') {
+      const dropped = entity.getDroppedItem();
+      if (dropped && dropped.name) {
+        rawName = dropped.name;
+      }
+    }
+  }
+
+  if (!rawName) {
+    rawName = entity.name || entity.displayName || '';
+  }
+  
   if (!rawName) return '';
   const parts = rawName.split(':');
   return parts[parts.length - 1].toLowerCase();
@@ -18,15 +33,25 @@ function isLivingEntity(entity) {
 
 // Helper to match an entity against a search type
 function matchEntity(entity, type) {
-  if (!isLivingEntity(entity)) return false;
-  if (type === undefined) return true;
+  if (!entity) return false;
+  if (type === undefined) {
+    return isLivingEntity(entity);
+  }
 
   const searchType = type.toLowerCase();
-  const cleanName = getCleanEntityName(entity);
-  if (cleanName === searchType) return true;
 
-  // Fallback check on displayName if name check fails
-  if (entity.displayName && entity.displayName.toLowerCase() === searchType) return true;
+  // Check if it matches as a living entity/mob
+  if (isLivingEntity(entity)) {
+    const cleanName = getCleanEntityName(entity);
+    if (cleanName === searchType) return true;
+    if (entity.displayName && entity.displayName.toLowerCase() === searchType) return true;
+  }
+
+  // Check if it matches as a dropped item
+  if (entity.name === 'item' || entity.name === 'Item' || entity.name === 'item_stack') {
+    const cleanName = getCleanEntityName(entity);
+    if (cleanName === searchType) return true;
+  }
 
   return false;
 }
@@ -76,14 +101,26 @@ const tests = [
     expected: false
   },
   {
-    name: "Filter check: Entity is dropped 'item' (should be excluded)",
-    entity: { type: 'other', name: 'item' },
-    searchType: 'item',
+    name: "Filter check: Entity is dropped 'item' (should be excluded if no type given)",
+    entity: { type: 'other', name: 'item', getDroppedItem: () => ({ name: 'raw_porkchop' }) },
+    searchType: undefined,
     expected: false
+  },
+  {
+    name: "Dropped item check: Match raw_porkchop specifically",
+    entity: { type: 'other', name: 'item', getDroppedItem: () => ({ name: 'raw_porkchop' }) },
+    searchType: 'raw_porkchop',
+    expected: true
+  },
+  {
+    name: "Dropped item check: Match namespaced item minecraft:raw_chicken",
+    entity: { type: 'other', name: 'item', getDroppedItem: () => ({ name: 'minecraft:raw_chicken' }) },
+    searchType: 'raw_chicken',
+    expected: true
   }
 ];
 
-console.log("=== RUNNING ENTITY MATCHING TESTS (WITH PROPOSED FIX) ===");
+console.log("=== RUNNING ENTITY MATCHING TESTS ===");
 let passedAll = true;
 
 tests.forEach((t) => {
@@ -102,7 +139,7 @@ tests.forEach((t) => {
 });
 
 if (passedAll) {
-  console.log("\nAll entity matching checks passed successfully! The proposed fix is verified.");
+  console.log("\nAll entity matching checks passed successfully!");
 } else {
   console.log("\nSome tests failed. Please refine the matching helpers.");
 }

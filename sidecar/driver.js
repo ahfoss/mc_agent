@@ -48,7 +48,22 @@ function sendResponse(id, success, result = {}, error = null) {
 // Helper to clean entity names (removes namespaces like "minecraft:")
 function getCleanEntityName(entity) {
   if (!entity) return '';
-  const rawName = entity.name || entity.displayName || '';
+  
+  let rawName = '';
+  // Handle dropped items
+  if (entity.name === 'item' || entity.name === 'Item' || entity.name === 'item_stack') {
+    if (typeof entity.getDroppedItem === 'function') {
+      const dropped = entity.getDroppedItem();
+      if (dropped && dropped.name) {
+        rawName = dropped.name;
+      }
+    }
+  }
+
+  if (!rawName) {
+    rawName = entity.name || entity.displayName || '';
+  }
+  
   if (!rawName) return '';
   const parts = rawName.split(':');
   return parts[parts.length - 1].toLowerCase();
@@ -63,15 +78,25 @@ function isLivingEntity(entity) {
 
 // Helper to match an entity against a search type
 function matchEntity(entity, type) {
-  if (!isLivingEntity(entity)) return false;
-  if (type === undefined) return true;
+  if (!entity) return false;
+  if (type === undefined) {
+    return isLivingEntity(entity);
+  }
 
   const searchType = type.toLowerCase();
-  const cleanName = getCleanEntityName(entity);
-  if (cleanName === searchType) return true;
 
-  // Fallback check on displayName if name check fails
-  if (entity.displayName && entity.displayName.toLowerCase() === searchType) return true;
+  // Check if it matches as a living entity/mob
+  if (isLivingEntity(entity)) {
+    const cleanName = getCleanEntityName(entity);
+    if (cleanName === searchType) return true;
+    if (entity.displayName && entity.displayName.toLowerCase() === searchType) return true;
+  }
+
+  // Check if it matches as a dropped item
+  if (entity.name === 'item' || entity.name === 'Item' || entity.name === 'item_stack') {
+    const cleanName = getCleanEntityName(entity);
+    if (cleanName === searchType) return true;
+  }
 
   return false;
 }
@@ -268,11 +293,37 @@ async function handleCommand(id, method, params) {
           goal = new goals.GoalNear(x, y, z, goalRange);
         }
 
+        let stuckInterval;
+        let lastPos = bot.entity.position.clone();
+        let lastMovedTime = Date.now();
+
+        stuckInterval = setInterval(() => {
+          const currentPos = bot.entity.position;
+          const dist = currentPos.distanceTo(lastPos);
+          if (dist > 0.1) {
+            lastPos = currentPos.clone();
+            lastMovedTime = Date.now();
+          } else {
+            if (Date.now() - lastMovedTime > 3000) {
+              clearInterval(stuckInterval);
+              console.log('[Sidecar Pathfinder] Stuck detected! Cancelling pathfind and executing recovery jump.');
+              bot.pathfinder.stop();
+              // Trigger helper jump
+              bot.setControlState('jump', true);
+              setTimeout(() => {
+                bot.setControlState('jump', false);
+              }, 300);
+            }
+          }
+        }, 500);
+
         try {
           await bot.pathfinder.goto(goal);
+          clearInterval(stuckInterval);
           triggerStateUpdates();
           sendResponse(id, true);
         } catch (err) {
+          clearInterval(stuckInterval);
           sendResponse(id, false, {}, err.message);
         }
         break;
@@ -618,6 +669,30 @@ async function handleCommand(id, method, params) {
         } else {
           sendResponse(id, true, { entity: null });
         }
+        break;
+      }
+
+      case 'get_nearby_items': {
+        const { max_distance } = params;
+        const dist = max_distance || 32;
+        const items = [];
+
+        for (const entityId in bot.entities) {
+          const entity = bot.entities[entityId];
+          if (entity && (entity.name === 'item' || entity.name === 'Item' || entity.name === 'item_stack')) {
+            const cleanName = getCleanEntityName(entity);
+            const d = bot.entity.position.distanceTo(entity.position);
+            if (d <= dist) {
+              items.push({
+                id: entity.id,
+                name: cleanName,
+                position: { x: entity.position.x, y: entity.position.y, z: entity.position.z },
+                distance: d
+              });
+            }
+          }
+        }
+        sendResponse(id, true, { items });
         break;
       }
 

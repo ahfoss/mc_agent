@@ -462,6 +462,12 @@ class BaseBot:
             return entity_data
         return None
 
+    async def get_nearby_items(self, max_distance=32):
+        res = await self.send_command("get_nearby_items", {
+            "max_distance": max_distance
+        })
+        return res.get("items", [])
+
     async def attack(self, entity_id):
         await self.send_command("attack", {
             "entity_id": entity_id

@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any
 from core.bot import Vec3
+import capabilities.items as ui
 
 async def hunt_mob(agent: Any, mob_id: int, mob_name: str, initial_pos: Any) -> bool:
     """
@@ -14,14 +15,7 @@ async def hunt_mob(agent: Any, mob_id: int, mob_name: str, initial_pos: Any) -> 
         await agent.bot.move_to(mob_pos, range_val=2)
         
         # 2. Equip the best weapon/tool in inventory
-        tool_to_equip = None
-        inv = agent.bot.get_inventory()
-        for tool in ["iron_sword", "stone_sword", "wooden_sword", "iron_axe", "stone_axe", "wooden_axe"]:
-            if inv.get(tool, 0) > 0:
-                tool_to_equip = tool
-                break
-        if tool_to_equip:
-            await agent.bot.equip(tool_to_equip, "hand")
+        await ui.equip_best_weapon(agent)
             
         # 3. Attack loop
         for _ in range(5):
@@ -37,9 +31,39 @@ async def hunt_mob(agent: Any, mob_id: int, mob_name: str, initial_pos: Any) -> 
             await agent.bot.attack(mob_id)
             await asyncio.sleep(0.5)
             
-        # 4. Walk to the last known position of the mob to collect drops
-        await agent.bot.move_to(mob_pos, range_val=1)
-        await asyncio.sleep(1.0) # wait for collection
+        # 4. Walk to last known position first
+        try:
+            await agent.bot.move_to(mob_pos, range_val=2)
+        except Exception:
+            pass
+            
+        # 5. Scan for expected dropped meat and collect it directly
+        expected_meat = ui.MOB_TO_MEAT.get(mob_name)
+        if expected_meat:
+            for _ in range(3): # Try up to 3 times to find and walk to the meat item
+                try:
+                    nearby_items = await agent.bot.get_nearby_items(max_distance=15)
+                except TypeError:
+                    nearby_items = []
+                target_items = [item for item in nearby_items if item["name"] == expected_meat]
+                if target_items:
+                    # Sort by distance
+                    target_items.sort(key=lambda x: x.get("distance", 999))
+                    closest_item = target_items[0]
+                    item_pos = Vec3(closest_item["position"]["x"], closest_item["position"]["y"], closest_item["position"]["z"])
+                    await agent.bot.chat(f"Collecting dropped {expected_meat}...")
+                    try:
+                        await agent.bot.move_to(item_pos, range_val=1)
+                        await asyncio.sleep(0.5)
+                    except Exception:
+                        pass
+                else:
+                    break
+        else:
+            # Fallback to last known position
+            await agent.bot.move_to(mob_pos, range_val=1)
+            await asyncio.sleep(1.0)
+            
         return True
     except asyncio.CancelledError:
         raise

@@ -100,7 +100,5 @@ def register_commands(registry):
     registry.register("furnish shelter", handle_furnish_shelter)
     registry.register("place block", handle_place_block)
     registry.register("test", handle_test)
-    registry.register("meat", handle_forage)
     registry.register("forage", handle_forage)
-    registry.register("food", handle_forage)
     registry.register("mine iron", handle_mine_iron)
