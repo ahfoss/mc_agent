@@ -49,11 +49,17 @@ async def mine_vein(agent: Any, return_pos: Vec3) -> None:
             
         await agent.bot.chat(f"Iron ore vein found at {ore_pos}! Mining...")
         try:
-            await agent.bot.move_to(ore_pos, range_val=2)
+            await agent.bot.move_to(ore_pos, range_val=1, can_dig=True)
             await equip_pickaxe(agent)
             await agent.bot.dig(ore_pos)
             vein_dig_count += 1
             await asyncio.sleep(0.5)
+            # Walk directly onto the mined block coordinates to trigger pickup
+            try:
+                await agent.bot.move_to(ore_pos, range_val=1)
+                await asyncio.sleep(0.2)
+            except Exception:
+                pass
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -61,6 +67,25 @@ async def mine_vein(agent: Any, return_pos: Vec3) -> None:
             break
             
     if vein_dig_count > 0:
+        # Scan and collect all nearby raw iron drops in the area
+        for _ in range(3):
+            try:
+                nearby = await agent.bot.get_nearby_items(max_distance=8)
+            except TypeError:
+                nearby = []
+            raw_irons = [item for item in nearby if item["name"] == "raw_iron"]
+            if raw_irons:
+                raw_irons.sort(key=lambda x: x.get("distance", 999))
+                closest = raw_irons[0]
+                item_pos = Vec3(closest["position"]["x"], closest["position"]["y"], closest["position"]["z"])
+                try:
+                    await agent.bot.move_to(item_pos, range_val=1)
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+            else:
+                break
+
         try:
             await agent.bot.move_to(return_pos, range_val=0)
         except Exception:
