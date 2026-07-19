@@ -1,9 +1,8 @@
 from core.bot import BaseBot
 from core.command_registry import CommandRegistry
 
-
-def handle_harvest(agent, username, message):
-    agent.bot.chat("Harvesting capability is not fully implemented yet, but I am ready to farm!")
+async def handle_harvest(agent, username, message):
+    await agent.bot.chat("Harvesting capability is not fully implemented yet, but I am ready to farm!")
 
 
 class FarmerBot(BaseBot):
@@ -40,10 +39,4 @@ class FarmerBot(BaseBot):
         )
         
     def start_events(self):
-        # Attach base connection/chat events
-        super().start_events()
-        
-        # In the future, you can attach custom farmer event handlers here, e.g.:
-        # @On(self.bot, "playerCollect")
-        # def on_collect(this, collector, collected, *args):
-        #     pass
+        pass

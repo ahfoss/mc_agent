@@ -1,9 +1,9 @@
+const net = require('net');
 const mineflayer = require('mineflayer');
 const pathfinder = require('mineflayer-pathfinder').pathfinder;
 const Movements = require('mineflayer-pathfinder').Movements;
 const goals = require('mineflayer-pathfinder').goals;
 const vec3 = require('vec3');
-const readline = require('readline');
 
 // Parse command line arguments
 const host = process.argv[2] || 'localhost';
@@ -21,58 +21,163 @@ const bot = mineflayer.createBot({
 
 bot.loadPlugin(pathfinder);
 
-// Standard Input reader for commands from Python
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  terminal: false
-});
+let clientSocket = null;
 
-// Helper function to send JSON events to Python
+// Helper to send event notification to Python
 function sendEvent(type, data = {}) {
-  console.log(JSON.stringify({ type: 'event', event: type, ...data }));
+  if (clientSocket && !clientSocket.destroyed) {
+    try {
+      clientSocket.write(JSON.stringify({ event: type, params: data }) + '\n');
+    } catch (err) {
+      console.error('[Sidecar TCP Event Error]', err.message);
+    }
+  }
 }
 
-// Helper function to send command responses
-function sendResponse(id, success, data = {}, error = null) {
-  console.log(JSON.stringify({ type: 'response', id, success, data, error }));
+// Helper to send response to Python
+function sendResponse(id, success, result = {}, error = null) {
+  if (clientSocket && !clientSocket.destroyed) {
+    try {
+      clientSocket.write(JSON.stringify({ id, success, result, error }) + '\n');
+    } catch (err) {
+      console.error('[Sidecar TCP Response Error]', err.message);
+    }
+  }
 }
 
-// Bot lifecycle events
+// Helper to clean entity names (removes namespaces like "minecraft:")
+function getCleanEntityName(entity) {
+  if (!entity) return '';
+  
+  let rawName = '';
+  // Handle dropped items
+  if (entity.name === 'item' || entity.name === 'Item' || entity.name === 'item_stack') {
+    if (typeof entity.getDroppedItem === 'function') {
+      const dropped = entity.getDroppedItem();
+      if (dropped && dropped.name) {
+        rawName = dropped.name;
+      }
+    }
+  }
+
+  if (!rawName) {
+    rawName = entity.name || entity.displayName || '';
+  }
+  
+  if (!rawName) return '';
+  const parts = rawName.split(':');
+  return parts[parts.length - 1].toLowerCase();
+}
+
+// Helper to check if an entity represents a living entity/mob (excluding players, items, projectiles, etc.)
+function isLivingEntity(entity) {
+  if (!entity) return false;
+  const nonLivingTypes = new Set(['player', 'object', 'orb', 'other']);
+  return !nonLivingTypes.has(entity.type);
+}
+
+// Helper to match an entity against a search type
+function matchEntity(entity, type) {
+  if (!entity) return false;
+  if (type === undefined) {
+    return isLivingEntity(entity);
+  }
+
+  const searchType = type.toLowerCase();
+
+  // Check if it matches as a living entity/mob
+  if (isLivingEntity(entity)) {
+    const cleanName = getCleanEntityName(entity);
+    if (cleanName === searchType) return true;
+    if (entity.displayName && entity.displayName.toLowerCase() === searchType) return true;
+  }
+
+  // Check if it matches as a dropped item
+  if (entity.name === 'item' || entity.name === 'Item' || entity.name === 'item_stack') {
+    const cleanName = getCleanEntityName(entity);
+    if (cleanName === searchType) return true;
+  }
+
+  return false;
+}
+
+
+// Bot listeners
 bot.once('spawn', () => {
-  sendEvent('spawn', {
-    version: bot.version
-  });
+  sendEvent('spawn', { version: bot.version });
+  // Send initial state update
+  triggerStateUpdates();
 });
 
 bot.on('chat', (username, message) => {
   sendEvent('chat', { username, message });
 });
 
-bot.on('end', (reason) => {
-  sendEvent('end', { reason });
-  process.exit(0);
-});
-
-bot.on('error', (err) => {
-  sendEvent('error', { error: err.message });
-});
-
-// Process incoming JSON commands from Python
-rl.on('line', async (line) => {
-  if (!line.trim()) return;
-  let cmd;
-  try {
-    cmd = JSON.parse(line);
-  } catch (err) {
-    sendEvent('error', { error: 'Malformed JSON command: ' + err.message });
-    return;
+bot.on('move', () => {
+  if (bot.entity) {
+    const pos = bot.entity.position;
+    sendEvent('position_update', { position: { x: pos.x, y: pos.y, z: pos.z } });
   }
+});
 
-  const { id, type, params } = cmd;
+// Helper to poll or trigger state updates
+function triggerStateUpdates() {
+  if (bot.inventory) {
+    const inv = bot.inventory.items().map(item => ({
+      name: item.name,
+      count: item.count,
+      type: item.type
+    }));
+    sendEvent('inventory_update', { inventory: inv });
+  }
+}
 
+// Monitor inventory updates
+bot.on('playerCollect', () => triggerStateUpdates());
+bot.on('chestLooted', () => triggerStateUpdates());
+
+// Create TCP Server for IPC communication with Python
+const server = net.createServer((socket) => {
+  console.log('[Sidecar TCP] Python client connected.');
+  clientSocket = socket;
+
+  // Send state updates on connect
+  triggerStateUpdates();
+
+  let buffer = '';
+  socket.on('data', async (chunk) => {
+    buffer += chunk.toString('utf-8');
+    let boundary = buffer.indexOf('\n');
+    while (boundary !== -1) {
+      const line = buffer.substring(0, boundary).trim();
+      buffer = buffer.substring(boundary + 1);
+      boundary = buffer.indexOf('\n');
+
+      if (!line) continue;
+      try {
+        const cmd = JSON.parse(line);
+        const { id, method, params } = cmd;
+        await handleCommand(id, method, params);
+      } catch (err) {
+        console.error('[Sidecar TCP Error] Error handling payload line:', err.message);
+      }
+    }
+  });
+
+  socket.on('close', () => {
+    console.log('[Sidecar TCP] Python client disconnected.');
+    clientSocket = null;
+  });
+
+  socket.on('error', (err) => {
+    console.error('[Sidecar TCP Error] Socket error:', err.message);
+  });
+});
+
+// Command dispatch handler
+async function handleCommand(id, method, params) {
   try {
-    switch (type) {
+    switch (method) {
       case 'get_state': {
         const pos = bot.entity ? bot.entity.position : null;
         const inv = bot.inventory ? bot.inventory.items().map(item => ({
@@ -140,8 +245,22 @@ rl.on('line', async (line) => {
 
       case 'find_block': {
         const { matching, maxDistance } = params;
+        let match;
+        const mcData = require('minecraft-data')(bot.version);
+        if (isNaN(matching)) {
+          const blockInfo = mcData.blocksByName[matching];
+          if (blockInfo) {
+            match = blockInfo.id;
+          } else {
+            sendResponse(id, true, { block: null });
+            break;
+          }
+        } else {
+          match = parseInt(matching);
+        }
+
         const block = bot.findBlock({
-          matching: parseInt(matching),
+          matching: match,
           maxDistance: parseInt(maxDistance) || 5
         });
         if (block) {
@@ -164,6 +283,7 @@ rl.on('line', async (line) => {
         const defaultMovements = new Movements(bot);
         defaultMovements.canDig = can_dig !== undefined ? can_dig : false;
         defaultMovements.canOpenDoors = true;
+        defaultMovements.allow1by1tunnels = true;
         bot.pathfinder.setMovements(defaultMovements);
 
         let goal;
@@ -173,10 +293,37 @@ rl.on('line', async (line) => {
           goal = new goals.GoalNear(x, y, z, goalRange);
         }
 
+        let stuckInterval;
+        let lastPos = bot.entity.position.clone();
+        let lastMovedTime = Date.now();
+
+        stuckInterval = setInterval(() => {
+          const currentPos = bot.entity.position;
+          const dist = currentPos.distanceTo(lastPos);
+          if (dist > 0.1) {
+            lastPos = currentPos.clone();
+            lastMovedTime = Date.now();
+          } else {
+            if (Date.now() - lastMovedTime > 3000) {
+              clearInterval(stuckInterval);
+              console.log('[Sidecar Pathfinder] Stuck detected! Cancelling pathfind and executing recovery jump.');
+              bot.pathfinder.stop();
+              // Trigger helper jump
+              bot.setControlState('jump', true);
+              setTimeout(() => {
+                bot.setControlState('jump', false);
+              }, 300);
+            }
+          }
+        }, 500);
+
         try {
           await bot.pathfinder.goto(goal);
+          clearInterval(stuckInterval);
+          triggerStateUpdates();
           sendResponse(id, true);
         } catch (err) {
+          clearInterval(stuckInterval);
           sendResponse(id, false, {}, err.message);
         }
         break;
@@ -185,20 +332,15 @@ rl.on('line', async (line) => {
       case 'dig': {
         const { x, y, z } = params;
         const block = bot.blockAt(new vec3.Vec3(x, y, z));
-        console.log(`[DEBUG SIDECAR dig] Bot position: ${bot.entity.position.toString()}`);
-        console.log(`[DEBUG SIDECAR dig] Target block coordinates: ${x}, ${y}, ${z}`);
         if (!block) {
-          console.log(`[DEBUG SIDECAR dig] Block not found at ${x}, ${y}, ${z}`);
           sendResponse(id, false, {}, 'Block not found');
           break;
         }
-        console.log(`[DEBUG SIDECAR dig] Found block: ${block.name} (type: ${block.type})`);
         try {
           await bot.dig(block);
-          console.log(`[DEBUG SIDECAR dig] Digging successful for block: ${block.name}`);
+          triggerStateUpdates();
           sendResponse(id, true);
         } catch (err) {
-          console.error(`[DEBUG SIDECAR dig] Digging failed for block ${block.name}: ${err.message}`);
           sendResponse(id, false, {}, err.message);
         }
         break;
@@ -210,23 +352,24 @@ rl.on('line', async (line) => {
         const item_id = mcData.itemsByName[item_name].id;
         const item = bot.inventory.findInventoryItem(item_id, null);
         if (!item) {
-          console.error(`[DEBUG PLACE ERROR] Item ${item_name} not found in inventory`);
           sendResponse(id, false, {}, `Item ${item_name} not found in inventory`);
           break;
         }
 
         if (bot.currentWindow) {
-          console.log('[DEBUG PLACE] Closing active window before equip...');
           bot.closeWindow(bot.currentWindow);
+          await new Promise(r => setTimeout(r, 100));
         }
 
-        console.log(`[DEBUG PLACE] Equipping ${item_name}...`);
         await bot.equip(item, 'hand');
-        console.log(`[DEBUG PLACE] Held item after equip: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
+        if (!bot.heldItem || bot.heldItem.name !== item.name) {
+          await new Promise(r => setTimeout(r, 200));
+          await bot.equip(item, 'hand');
+          await new Promise(r => setTimeout(r, 100));
+        }
 
         const refBlock = bot.blockAt(new vec3.Vec3(x, y, z));
         if (!refBlock) {
-          console.error(`[DEBUG PLACE ERROR] Reference block not found at (${x}, ${y}, ${z})`);
           sendResponse(id, false, {}, 'Reference block not found');
           break;
         }
@@ -236,17 +379,7 @@ rl.on('line', async (line) => {
           y_offset !== undefined ? y_offset : 1,
           z_offset !== undefined ? z_offset : 0
         );
-        const targetPos = refBlock.position.plus(faceVec);
-        const targetBlock = bot.blockAt(targetPos);
-        const targetAboveBlock = bot.blockAt(targetPos.offset(0, 1, 0));
 
-        console.log(`[DEBUG PLACE] Reference block: ${refBlock.name} (type: ${refBlock.type}) at ${refBlock.position.toString()}`);
-        console.log(`[DEBUG PLACE] Face vector: ${faceVec.toString()}`);
-        console.log(`[DEBUG PLACE] Target position: ${targetPos.toString()} is currently ${targetBlock ? targetBlock.name : 'unknown'}`);
-        console.log(`[DEBUG PLACE] Target above position: ${targetPos.offset(0, 1, 0).toString()} is currently ${targetAboveBlock ? targetAboveBlock.name : 'unknown'}`);
-        console.log(`[DEBUG PLACE] Bot position: ${bot.entity.position.toString()}`);
-
-        console.log(`[DEBUG PLACE] Forcing lookAt target block face...`);
         const faceCenter = refBlock.position.offset(
           0.5 + faceVec.x * 0.5,
           0.5 + faceVec.y * 0.5,
@@ -255,12 +388,10 @@ rl.on('line', async (line) => {
         await bot.lookAt(faceCenter);
 
         try {
-          console.log(`[DEBUG PLACE] Calling bot.placeBlock...`);
           await bot.placeBlock(refBlock, faceVec);
-          console.log(`[DEBUG PLACE] bot.placeBlock resolved successfully!`);
+          triggerStateUpdates();
           sendResponse(id, true);
         } catch (err) {
-          console.error(`[DEBUG PLACE ERROR] bot.placeBlock failed: ${err.message}`);
           sendResponse(id, false, {}, err.message);
         }
         break;
@@ -276,11 +407,12 @@ rl.on('line', async (line) => {
           break;
         }
         if (bot.currentWindow) {
-          console.log('[DEBUG EQUIP] Closing active window before equip...');
           bot.closeWindow(bot.currentWindow);
+          await new Promise(r => setTimeout(r, 100));
         }
         const dest = (destination === 'mainHand') ? 'hand' : (destination || 'hand');
         await bot.equip(item, dest);
+        triggerStateUpdates();
         sendResponse(id, true);
         break;
       }
@@ -358,7 +490,12 @@ rl.on('line', async (line) => {
         })();
 
         const result = await Promise.race([inventoryCheck, craftAction]);
+        if (bot.currentWindow) {
+          bot.closeWindow(bot.currentWindow);
+          await new Promise(r => setTimeout(r, 100));
+        }
         if (result.success) {
+          triggerStateUpdates();
           sendResponse(id, true);
         } else {
           sendResponse(id, false, {}, result.error);
@@ -375,10 +512,7 @@ rl.on('line', async (line) => {
         }
 
         try {
-          console.log('[TEST 1] Opening crafting table...');
           const window = await bot.openBlock(ct_block);
-          console.log(`[TEST 1] Crafting table open. bot.currentWindow is ${bot.currentWindow ? 'active' : 'null'}`);
-          
           const items = bot.inventory.items();
           if (items.length === 0) {
             bot.closeWindow(window);
@@ -387,17 +521,10 @@ rl.on('line', async (line) => {
           }
           const item = items[0];
 
-          console.log(`[TEST 1] Equipping ${item.name} while window is open...`);
           await bot.equip(item, 'hand');
-          console.log(`[TEST 1] Held item after equip: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
-
           await bot.lookAt(ct_block.position.offset(0.5, 3.0, 0.5));
-
-          console.log('[TEST 1] Closing crafting window...');
           bot.closeWindow(window);
 
-          console.log(`[TEST 1] Held item after window close: ${bot.heldItem ? bot.heldItem.name : 'nothing'}`);
-          
           sendResponse(id, true, {
             held_after_equip: item.name,
             held_after_close: bot.heldItem ? bot.heldItem.name : 'nothing'
@@ -411,7 +538,6 @@ rl.on('line', async (line) => {
       case 'test_case_2': {
         const { x, y, z } = params;
         const refBlock = bot.blockAt(new vec3.Vec3(x, y, z));
-        console.log(`[TEST 2] Reference block type: ${refBlock ? refBlock.name : 'null'}`);
         
         try {
           const items = bot.inventory.items();
@@ -422,14 +548,13 @@ rl.on('line', async (line) => {
           const item = items[0];
           await bot.equip(item, 'hand');
 
-          console.log(`[TEST 2] Calling bot.placeBlock against ${refBlock ? refBlock.name : 'null'}...`);
           const placePromise = bot.placeBlock(refBlock, new vec3.Vec3(0, 1, 0));
           const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000));
           
           await Promise.race([placePromise, timeoutPromise]);
+          triggerStateUpdates();
           sendResponse(id, true, { status: 'success' });
         } catch (err) {
-          console.log(`[TEST 2] bot.placeBlock failed: ${err.message}`);
           sendResponse(id, true, { status: 'failed', error: err.message });
         }
         break;
@@ -493,6 +618,7 @@ rl.on('line', async (line) => {
           try {
             await furnace.takeOutput();
             furnace.close();
+            triggerStateUpdates();
             sendResponse(id, true);
           } catch (err) {
             furnace.close();
@@ -505,11 +631,121 @@ rl.on('line', async (line) => {
         break;
       }
 
+      case 'stop': {
+        bot.pathfinder.setGoal(null);
+        if (bot.currentWindow) {
+          bot.closeWindow(bot.currentWindow);
+        }
+        sendResponse(id, true);
+        break;
+      }
+
+      case 'find_entity': {
+        const { type, max_distance } = params;
+        const dist = max_distance || 32;
+        let bestEntity = null;
+        let bestDist = dist;
+
+        for (const entityId in bot.entities) {
+          const entity = bot.entities[entityId];
+          if (matchEntity(entity, type)) {
+            const d = bot.entity.position.distanceTo(entity.position);
+            if (d < bestDist) {
+              bestDist = d;
+              bestEntity = entity;
+            }
+          }
+        }
+
+        if (bestEntity) {
+          const nameVal = bestEntity.name || bestEntity.displayName || type || "unknown";
+          sendResponse(id, true, {
+            entity: {
+              id: bestEntity.id,
+              name: nameVal,
+              position: { x: bestEntity.position.x, y: bestEntity.position.y, z: bestEntity.position.z }
+            }
+          });
+        } else {
+          sendResponse(id, true, { entity: null });
+        }
+        break;
+      }
+
+      case 'get_nearby_items': {
+        const { max_distance } = params;
+        const dist = max_distance || 32;
+        const items = [];
+
+        for (const entityId in bot.entities) {
+          const entity = bot.entities[entityId];
+          if (entity && (entity.name === 'item' || entity.name === 'Item' || entity.name === 'item_stack')) {
+            const cleanName = getCleanEntityName(entity);
+            const d = bot.entity.position.distanceTo(entity.position);
+            if (d <= dist) {
+              items.push({
+                id: entity.id,
+                name: cleanName,
+                position: { x: entity.position.x, y: entity.position.y, z: entity.position.z },
+                distance: d
+              });
+            }
+          }
+        }
+        sendResponse(id, true, { items });
+        break;
+      }
+
+      case 'attack': {
+        const { entity_id } = params;
+        const entity = bot.entities[entity_id];
+        if (!entity) {
+          sendResponse(id, false, {}, 'Entity not found');
+          break;
+        }
+        try {
+          await bot.lookAt(entity.position.offset(0, 1, 0));
+          await bot.attack(entity);
+          sendResponse(id, true);
+        } catch (err) {
+          sendResponse(id, false, {}, err.message);
+        }
+        break;
+      }
+
+      case 'deposit': {
+        const { chest_x, chest_y, chest_z, item_name, quantity } = params;
+        const chestBlock = bot.blockAt(new vec3.Vec3(chest_x, chest_y, chest_z));
+        if (!chestBlock || chestBlock.name !== 'chest') {
+          sendResponse(id, false, {}, 'Chest not found at specified coordinates');
+          break;
+        }
+
+        try {
+          const chest = await bot.openChest(chestBlock);
+          const mcData = require('minecraft-data')(bot.version);
+          const item_id = mcData.itemsByName[item_name].id;
+          await chest.deposit(item_id, null, quantity);
+          chest.close();
+          triggerStateUpdates();
+          sendResponse(id, true);
+        } catch (err) {
+          sendResponse(id, false, {}, `Failed to deposit: ${err.message}`);
+        }
+        break;
+      }
 
       default:
-        sendResponse(id, false, {}, 'Unknown command type: ' + type);
+        sendResponse(id, false, {}, 'Unknown command method: ' + method);
     }
   } catch (err) {
     sendResponse(id, false, {}, err.message);
   }
+}
+
+// Start local TCP server
+const serverPort = 0; // Bind to random free port
+server.listen(serverPort, '127.0.0.1', () => {
+  const boundPort = server.address().port;
+  console.log(`PORT=${boundPort}`); // Python reads this on stdout to know where to connect!
 });
